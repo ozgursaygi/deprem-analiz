@@ -17,7 +17,6 @@ from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
-from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, roc_auc_score, brier_score_loss, roc_curve)
 from xgboost import XGBClassifier
@@ -40,11 +39,13 @@ R_ = '\033[91m'; G_ = '\033[92m'; P_ = '\033[95m'
 C_ = '\033[96m'; Y_ = '\033[93m'; B_ = '\033[94m'; X_ = '\033[0m'
 CURRENT_UTC_TIME = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 CURRENT_USER = "ozgursaygi"
+
+# YENI OZELLIKLER EKLENDI: event_rate_24h, event_rate_12h, spatial_decay_index
 ENHANCED_FEATURES = [
     'mag','depth','b_value_local','event_rate_local','time_since_last',
     'mag_completeness','spatial_density','temporal_clustering',
     'mag_trend','depth_clustering','energy_rate','swarm_indicator',
-    'fault_distance']
+    'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index']
 TARGET = 'is_foreshock'
 
 @njit
@@ -130,6 +131,7 @@ def setup_database(conn, tn):
           "temporal_clustering":"REAL","mag_trend":"REAL",
           "depth_clustering":"REAL","energy_rate":"REAL",
           "swarm_indicator":"INTEGER","fault_distance":"REAL",
+          "event_rate_24h":"REAL","event_rate_12h":"REAL","spatial_decay_index":"REAL",
           "earthquake_type":"TEXT","is_foreshock":"INTEGER",
           "olasilik":"REAL","confidence_score":"REAL","total_uncertainty":"REAL"}
     created=False
@@ -239,8 +241,32 @@ def calc_features(df_all):
         ct=row['time']
         pi=[i for i in ni[si] if dfs.loc[i,'time']<=ct]
         if not pi: continue
-        le=dfs.iloc[pi]; t30=ct-timedelta(days=30)
-        re=le[le['time']>=t30]; er=len(re)/30.0
+        le=dfs.iloc[pi]
+        
+        # Zaman pencereleri
+        t30=ct-timedelta(days=30)
+        t24h=ct-timedelta(hours=24)
+        t12h=ct-timedelta(hours=12)
+        
+        re=le[le['time']>=t30]
+        er=len(re)/30.0
+        er_24h=len(le[le['time']>=t24h])
+        er_12h=len(le[le['time']>=t12h])
+        
+        # Spatial Decay Index: Uzaklığa göre sismik yoğunluk
+        decay_idx = 0.0
+        if len(re) > 0:
+            rlats = np.radians(re['latitude'].values)
+            rlons = np.radians(re['longitude'].values)
+            clat = np.radians(row['latitude'])
+            clon = np.radians(row['longitude'])
+            dlon = rlons - clon
+            dlat = rlats - clat
+            a = np.sin(dlat/2)**2 + np.cos(clat)*np.cos(rlats)*np.sin(dlon/2)**2
+            c_dist = 2 * np.arcsin(np.sqrt(a))
+            dists = 6371.0 * c_dist
+            decay_idx = np.sum(np.exp(-dists / 10.0)) # 10 km etki çapı ile eksponansiyel azalma
+            
         bv=calc_b_value(le['mag'].values)
         pe=le[le['time']<ct]
         ts=(ct-pe['time'].max()).total_seconds()/3600 if not pe.empty else None
@@ -259,10 +285,12 @@ def calc_features(df_all):
         faults=np.array([[40.7,29.9],[38.4,27.1],[39.6,41.0]])
         fd=[haversine_distance(row['latitude'],row['longitude'],f[0],f[1]) for f in faults]
         mfd=min(fd) if fd else None
+        
         ups.append({'eventID':eid,'b_value_local':bv,'event_rate_local':er,
             'time_since_last':ts,'mag_completeness':mc,'spatial_density':sd,
             'temporal_clustering':tc,'mag_trend':mt,'depth_clustering':dc,
-            'energy_rate':enr,'swarm_indicator':sw,'fault_distance':mfd})
+            'energy_rate':enr,'swarm_indicator':sw,'fault_distance':mfd,
+            'event_rate_24h':er_24h,'event_rate_12h':er_12h,'spatial_decay_index':decay_idx})
     if ups:
         dfu=pd.DataFrame(ups).set_index('eventID')
         df.set_index('eventID',inplace=True); df.update(dfu)
@@ -396,7 +424,6 @@ def train_sklearn(df_full, new_ids, force=False):
     af=[f for f in ENHANCED_FEATURES if f in trl.columns]
     Xtr=trl[af].apply(safe_fill); ytr=trl[TARGET]
     Xte=tel[af].apply(safe_fill); yte=tel[TARGET]
-    # DEGISIKLIK A: class-balancing kaldirildi
     sw=None
     for mtype in ['xgb','rf']:
         bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
@@ -405,11 +432,12 @@ def train_sklearn(df_full, new_ids, force=False):
                 'learning_rate':0.1,'random_state':42,
                 'use_label_encoder':False,'eval_metric':'logloss'}))
         else:
-            # DEGISIKLIK B: 'class_weight':'balanced' kaldirildi
             mdl=RandomForestClassifier(**(bp or {'n_estimators':300,
                 'max_depth':15,'random_state':42}))
         mdl.fit(Xtr,ytr,sample_weight=sw if mtype=='xgb' else None)
-        cal=CalibratedClassifierCV(mdl,method='isotonic',cv=3)
+        
+        # DEGİŞİKLİK: Isotonic yerine sigmoid kalibrasyon
+        cal=CalibratedClassifierCV(mdl,method='sigmoid',cv=3)
         cal.fit(Xtr,ytr)
         yp=cal.predict(Xte); ypr=cal.predict_proba(Xte)[:,1]
         models[mtype]=cal; metrics[mtype]=get_metrics(yte,yp,ypr)
@@ -621,7 +649,6 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                     'Veri Yetersiz (Insufficient Data)</span>')
         try:
             val = float(v)
-            # DEGISIKLIK C: kirmizi esigi 20.00 -> 50.00
             if val >= 50.00:
                 return f'<span style="color:red;font-weight:bold">{val:.2f}</span>'
             return f"{val:.2f}"
