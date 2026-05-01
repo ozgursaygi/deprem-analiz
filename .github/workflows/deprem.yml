@@ -46,9 +46,99 @@ jobs:
             rf_v5.joblib
             lstm_v5.keras
             lstm_scaler_v5.joblib
-          key: deprem-state-${{ github.run_id }}
+          key: deprem-state-v2-${{ github.run_id }}
           restore-keys: |
-            deprem-state-
+            deprem-state-v2-
+
+      - name: Analiz scriptini calistir
+        run: python DTS_66_AFAD_LIVE.py
+
+      - name: HTML ciktilarini docs klasorune tasi
+        run: |
+          mkdir -p docs
+          mv -f deprem_haritasi_tip.html docs/ 2>/dev/null || true
+          mv -f deprem_haritasi_olasilik.html docs/ 2>/dev/null || true
+          mv -f deprem_analiz_raporu_sade.html docs/ 2>/dev/null || true
+          cat > docs/index.html << 'EOF'
+          <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">
+          <title>Deprem Analizi</title>
+          <meta http-equiv="refresh" content="0; url=deprem_analiz_raporu_sade.html">
+          </head><body>Yonlendiriliyor...</body></html>
+          EOF
+          echo "Son guncelleme (UTC): $(date -u '+%Y-%m-%d %H:%M:%S')" > docs/last_update.txt
+          ls -la docs/
+
+      - name: HTMLleri repoya commit et
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          if git diff --staged --quiet; then
+            echo "Degisiklik yok."
+          else
+            git commit -m "HTML guncellendi"
+            git push
+          fi
+
+      - name: Hata log artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hata-loglari
+          path: |
+            *.png
+            *.log
+          retention-days: 7name: Deprem Analizi (Otomatik)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deprem-analiz
+  cancel-in-progress: false
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Repoyu indir
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Sistem bagimliliklari
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgomp1
+
+      - name: Python paketlerini yukle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Modelleri ve DByi cachele
+        uses: actions/cache@v4
+        with:
+          path: |
+            earthquakes_3_5_plus_scientific_v5.db
+            xgb_v5.joblib
+            rf_v5.joblib
+            lstm_v5.keras
+            lstm_scaler_v5.joblib
+          key: deprem-state-v2-${{ github.run_id }}
+          restore-keys: |
+            deprem-state-v2-
 
       - name: Analiz scriptini calistir
         run: python DTS_66_AFAD_LIVE.py
