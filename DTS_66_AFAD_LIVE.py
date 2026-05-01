@@ -828,7 +828,7 @@ def main():
 
         dfr=df.copy()
         t7=pd.to_datetime(datetime.utcnow(),utc=True)-timedelta(days=7)
-        rm=(dfr['time']>=t7)|(dfr['olasilik'].isnull())
+        rm=(dfr['time']>=t7)&(dfr['olasilik'].isnull())
         aids=set(new_ids)|set(dfr[rm]['eventID'])
 
         if aids:
