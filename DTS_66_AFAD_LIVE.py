@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import pandas as pd
 import sqlite3
 import os
@@ -170,13 +164,12 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
                     ss=(ldt+timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
             except: ss='1990-01-01 00:00:00'
         else: ss='1990-01-01 00:00:00'
-    
-    # SAAT EKLENEREK DÜZELTİLEN KISIM:
+
     api_s=pd.to_datetime(ss).strftime('%Y-%m-%d %H:%M:%S')
     api_e=pd.to_datetime(end_lim).strftime('%Y-%m-%d %H:%M:%S')
     if api_s>api_e:
         api_s=(now-timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-        
+
     params={'start':api_s,'end':api_e,'orderby':'time-asc','minmag':'3.5'}
     for att in range(5):
         try:
@@ -376,7 +369,7 @@ def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
                'max_depth':trial.suggest_int('max_depth',5,15),
                'min_samples_split':trial.suggest_int('min_samples_split',2,8),
                'min_samples_leaf':trial.suggest_int('min_samples_leaf',1,4),
-               'class_weight':'balanced','random_state':42}
+               'random_state':42}
             mdl=RandomForestClassifier(**p)
         return cross_val_score(mdl,Xtr,ytr,cv=TimeSeriesSplit(n_splits=3),
                                scoring='roc_auc').mean()
@@ -403,7 +396,8 @@ def train_sklearn(df_full, new_ids, force=False):
     af=[f for f in ENHANCED_FEATURES if f in trl.columns]
     Xtr=trl[af].apply(safe_fill); ytr=trl[TARGET]
     Xte=tel[af].apply(safe_fill); yte=tel[TARGET]
-    sw=compute_sample_weight('balanced',ytr)
+    # DEGISIKLIK A: class-balancing kaldirildi
+    sw=None
     for mtype in ['xgb','rf']:
         bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
         if mtype=='xgb':
@@ -411,8 +405,9 @@ def train_sklearn(df_full, new_ids, force=False):
                 'learning_rate':0.1,'random_state':42,
                 'use_label_encoder':False,'eval_metric':'logloss'}))
         else:
+            # DEGISIKLIK B: 'class_weight':'balanced' kaldirildi
             mdl=RandomForestClassifier(**(bp or {'n_estimators':300,
-                'max_depth':15,'class_weight':'balanced','random_state':42}))
+                'max_depth':15,'random_state':42}))
         mdl.fit(Xtr,ytr,sample_weight=sw if mtype=='xgb' else None)
         cal=CalibratedClassifierCV(mdl,method='isotonic',cv=3)
         cal.fit(Xtr,ytr)
@@ -468,7 +463,7 @@ def train_lstm(df_full, new_ids, force=False):
                 loss='binary_crossentropy',metrics=['accuracy'])
     es=EarlyStopping(monitor='val_loss',patience=15,restore_best_weights=True)
     lr=ReduceLROnPlateau(monitor='val_loss',factor=0.5,patience=7)
-    cw={0:1.0,1:len(ytr)/(2*np.sum(ytr)) if np.sum(ytr)>0 else 1.0}
+    cw={0:1.0,1:1.0}
     mdl.fit(Xtr,ytr,epochs=100,batch_size=32,validation_data=(Xte,yte),
             callbacks=[es,lr],class_weight=cw,verbose=1)
     ypm=mdl.predict(Xte,verbose=0).flatten()
@@ -523,7 +518,6 @@ def predict_unc(dfp, models, lm, ls):
 def add_legend(m, title, items):
     body="".join([f'<i class="fa fa-circle" style="color:{c}"></i> {l}<br>'
                   for l,c in items.items()])
-    # SAĞA ALINAN LEJANT KISMI (right:50px):
     html=(f'<div style="position:fixed;bottom:50px;right:50px;width:280px;'
           f'padding:10px;border:2px solid grey;z-index:9999;font-size:13px;'
           f'background:white;border-radius:5px"><b>{title}</b><br>{body}</div>')
@@ -625,10 +619,10 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         if pd.isna(v) or v=="":
             return ('<span style="color:gray">'
                     'Veri Yetersiz (Insufficient Data)</span>')
-        try: 
+        try:
             val = float(v)
-            # Eğer değer 20.00 veya daha büyükse kırmızı ve kalın yaz
-            if val >= 20.00:
+            # DEGISIKLIK C: kirmizi esigi 20.00 -> 50.00
+            if val >= 50.00:
                 return f'<span style="color:red;font-weight:bold">{val:.2f}</span>'
             return f"{val:.2f}"
         except:
@@ -853,10 +847,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
-
-# In[ ]:
-
-
-
-
