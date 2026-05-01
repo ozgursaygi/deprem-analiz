@@ -40,7 +40,6 @@ C_ = '\033[96m'; Y_ = '\033[93m'; B_ = '\033[94m'; X_ = '\033[0m'
 CURRENT_UTC_TIME = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 CURRENT_USER = "ozgursaygi"
 
-# YENI OZELLIKLER EKLENDI: event_rate_24h, event_rate_12h, spatial_decay_index
 ENHANCED_FEATURES = [
     'mag','depth','b_value_local','event_rate_local','time_since_last',
     'mag_completeness','spatial_density','temporal_clustering',
@@ -243,7 +242,6 @@ def calc_features(df_all):
         if not pi: continue
         le=dfs.iloc[pi]
         
-        # Zaman pencereleri
         t30=ct-timedelta(days=30)
         t24h=ct-timedelta(hours=24)
         t12h=ct-timedelta(hours=12)
@@ -253,7 +251,6 @@ def calc_features(df_all):
         er_24h=len(le[le['time']>=t24h])
         er_12h=len(le[le['time']>=t12h])
         
-        # Spatial Decay Index: Uzaklığa göre sismik yoğunluk
         decay_idx = 0.0
         if len(re) > 0:
             rlats = np.radians(re['latitude'].values)
@@ -265,7 +262,7 @@ def calc_features(df_all):
             a = np.sin(dlat/2)**2 + np.cos(clat)*np.cos(rlats)*np.sin(dlon/2)**2
             c_dist = 2 * np.arcsin(np.sqrt(a))
             dists = 6371.0 * c_dist
-            decay_idx = np.sum(np.exp(-dists / 10.0)) # 10 km etki çapı ile eksponansiyel azalma
+            decay_idx = np.sum(np.exp(-dists / 10.0))
             
         bv=calc_b_value(le['mag'].values)
         pe=le[le['time']<ct]
@@ -319,23 +316,34 @@ def classify_eq_type(df):
     if 'earthquake_type' in df.columns: df=df.drop(columns=['earthquake_type'])
     return pd.merge(df,tr,on='eventID',how='left')
 
+# DEĞİŞİKLİK: Artçı depremler "Öncü" olarak etiketlenmiyor.
 def create_labels(df, thresh=5.5, tw_days=30, r_km=50):
     df=df.sort_values('time').reset_index(drop=True)
     twns=timedelta(days=tw_days).total_seconds()*1e9
     ni=get_neighbors_cKDTree(df,radius_km=r_km)
     if ni is None: df[TARGET]=0; return df
+    
     labels=np.zeros(len(df),dtype=int)
-    mags=df['mag'].values; tn_=df['time'].astype(np.int64).values
+    mags=df['mag'].values
+    tn_=df['time'].astype(np.int64).values
+    eq_types = df.get('earthquake_type', pd.Series(['Tekil Deprem']*len(df))).values
+    
     for i in range(len(df)):
+        # Eger bu olay bir Artci Deprem ise onu oncu olarak etiketlemiyoruz
+        if eq_types[i] == 'Artci Deprem':
+            continue
+            
         fi=[idx for idx in ni[i] if idx>i]
         if not fi: continue
+        
         td=tn_[fi]-tn_[i]; itm=td<=twns
         if np.any(itm):
             ri=np.array(fi)[itm]
             if np.max(mags[ri])>=thresh: labels[i]=1
+            
     df[TARGET]=labels
     pr=(labels.sum()/len(labels))*100
-    print(f"{G_}Pozitif: %{pr:.1f} ({labels.sum()}/{len(labels)}){X_}")
+    print(f"{G_}Pozitif (Gercek Oncu): %{pr:.1f} ({labels.sum()}/{len(labels)}){X_}")
     return df
 
 def get_metrics(yt, yp, ypr):
@@ -436,7 +444,6 @@ def train_sklearn(df_full, new_ids, force=False):
                 'max_depth':15,'random_state':42}))
         mdl.fit(Xtr,ytr,sample_weight=sw if mtype=='xgb' else None)
         
-        # DEGİŞİKLİK: Isotonic yerine sigmoid kalibrasyon
         cal=CalibratedClassifierCV(mdl,method='sigmoid',cv=3)
         cal.fit(Xtr,ytr)
         yp=cal.predict(Xte); ypr=cal.predict_proba(Xte)[:,1]
@@ -546,7 +553,7 @@ def predict_unc(dfp, models, lm, ls):
 def add_legend(m, title, items):
     body="".join([f'<i class="fa fa-circle" style="color:{c}"></i> {l}<br>'
                   for l,c in items.items()])
-    html=(f'<div style="position:fixed;bottom:50px;right:50px;width:280px;'
+    html=(f'<div style="position:fixed;bottom:50px;right:50px;width:320px;'
           f'padding:10px;border:2px solid grey;z-index:9999;font-size:13px;'
           f'background:white;border-radius:5px"><b>{title}</b><br>{body}</div>')
     m.get_root().html.add_child(folium.Element(html))
@@ -595,15 +602,17 @@ def map_by_type(dfr, fn="deprem_haritasi_tip.html"):
     add_legend(m,"Deprem Tipi (Earthquake Type)",tcm)
     m.save(fn)
 
+# DEĞİŞİKLİK: Harita renk ve eşikleri %50 ve %25 olarak güncellendi.
 def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
     if 'olasilik' not in dfr.columns: return
     dm=dfr[(dfr['mag']>=4.5)&(dfr['olasilik'].notna())].copy()
     m=base_map(dm)
     for _,r in dm.iterrows():
         p=r.get('olasilik',0); c=r.get('confidence_score',50)
-        if p>30: clr='darkred' if c>70 else 'red'
-        elif p>15: clr='darkorange' if c>70 else 'orange'
+        if p >= 50: clr='darkred' if c>70 else 'red'
+        elif p >= 25: clr='darkorange' if c>70 else 'orange'
         else: clr='yellow'
+        
         ts=pd.to_datetime(r['time']).strftime('%Y-%m-%d %H:%M')
         ph=(f"<b>Yer (Location):</b> {r['place']}<br>"
             f"<b>Tarih (Date):</b> {ts}<br>"
@@ -616,11 +625,12 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
             popup=folium.Popup(ph,max_width=350),
             color=clr,fill=True,fill_color=clr,fill_opacity=0.7
         ).add_to(m)
-    li={"Yuksek Risk (High Risk) >%30 / Yuksek Guven (High Conf.)":"darkred",
-        "Yuksek Risk (High Risk) >%30 / Dusuk Guven (Low Conf.)":"red",
-        "Orta Risk (Medium Risk) >%15 / Yuksek Guven (High Conf.)":"darkorange",
-        "Orta Risk (Medium Risk) >%15 / Dusuk Guven (Low Conf.)":"orange",
-        "Dusuk Risk (Low Risk)":"yellow"}
+        
+    li={"Yuksek Risk (High Risk) >= %50 / Yuksek Guven":"darkred",
+        "Yuksek Risk (High Risk) >= %50 / Dusuk Guven":"red",
+        "Orta Risk (Medium Risk) >= %25 / Yuksek Guven":"darkorange",
+        "Orta Risk (Medium Risk) >= %25 / Dusuk Guven":"orange",
+        "Dusuk Risk (Low Risk) < %25":"yellow"}
     add_legend(m,"Olasilik ve Guven (Probability & Confidence)",li)
     m.save(fn)
 
@@ -828,7 +838,9 @@ def main():
 
         dfr=df.copy()
         t7=pd.to_datetime(datetime.utcnow(),utc=True)-timedelta(days=7)
-        rm=(dfr['time']>=t7)&(dfr['olasilik'].isnull())
+        
+        # DEĞİŞİKLİK: Filtre operatörü & yerine | yapıldı. (Dinamik güncelleme için)
+        rm=(dfr['time']>=t7)|(dfr['olasilik'].isnull())
         aids=set(new_ids)|set(dfr[rm]['eventID'])
 
         if aids:
@@ -870,7 +882,6 @@ def main():
         print(traceback.format_exc())
     finally:
         if conn: conn.close()
-
 
 if __name__=="__main__":
     main()
