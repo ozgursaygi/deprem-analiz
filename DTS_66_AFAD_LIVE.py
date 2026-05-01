@@ -145,11 +145,74 @@ def setup_database(conn, tn):
     cur.execute(f"CREATE INDEX IF NOT EXISTS idx_time ON {tn} (time);")
     conn.commit(); return created
 
+# YENİ FONKSİYON: Veritabanı yoksa geçmişi CSV'den yükler
+def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
+    if not os.path.exists(csv_path):
+        print(f"{Y_}Tarihi veri dosyasi bulunamadi ({csv_path}). Atliyoruz...{X_}")
+        return False
+    try:
+        print(f"{C_}Gecmis datalar {csv_path} dosyasindan veritabanina aktariliyor...{X_}")
+        df_csv = pd.read_csv(csv_path)
+        
+        # Sutun isimlerini esnek (fuzzy) olarak eslestirme
+        col_map = {}
+        for col in df_csv.columns:
+            cl = col.lower()
+            if 'date' in cl or 'time' in cl: col_map[col] = 'time'
+            elif 'mag' in cl: col_map[col] = 'mag'
+            elif 'lat' in cl: col_map[col] = 'latitude'
+            elif 'lon' in cl or 'lng' in cl: col_map[col] = 'longitude'
+            elif 'dep' in cl: col_map[col] = 'depth'
+            elif 'id' in cl and 'grid' not in cl: col_map[col] = 'eventID'
+            elif 'place' in cl or 'loc' in cl: col_map[col] = 'place'
+        
+        df_csv.rename(columns=col_map, inplace=True)
+        
+        # Eksik olan zorunlu alanlari yarat
+        if 'eventID' not in df_csv.columns:
+            df_csv['eventID'] = [f"csv_id_{int(time.time())}_{i}" for i in range(len(df_csv))]
+        if 'place' not in df_csv.columns:
+            df_csv['place'] = "Ridgecrest Gecmis Veri (CSV)"
+            
+        # Kritik sutunlar var mi kontrol et
+        req = ['time', 'latitude', 'longitude', 'depth', 'mag', 'eventID']
+        missing = [c for c in req if c not in df_csv.columns]
+        if missing:
+            print(f"{R_}CSV dosyasinda zorunlu sutunlar eksik: {missing}{X_}")
+            return False
+            
+        df_csv['time'] = df_csv['time'].apply(standardize_date)
+        df_csv.dropna(subset=['time', 'mag', 'latitude', 'longitude'], inplace=True)
+        
+        # Sadece M>=3.5 olanlari alalim (sistem 3.5 uzerine kurulu)
+        df_csv = df_csv[df_csv['mag'] >= 3.5]
+        
+        if df_csv.empty:
+            print(f"{Y_}CSV dosyasinda islenebilir (M>=3.5) veri bulunamadi.{X_}")
+            return False
+            
+        # Veritabanindaki sutunlari cek
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({tn})")
+        db_cols = [row[1] for row in cur.fetchall()]
+        
+        # Sadece db ile eslesen sutunlari veritabanina yaz
+        insert_cols = [c for c in df_csv.columns if c in db_cols]
+        df_csv[insert_cols].to_sql(tn, conn, if_exists='append', index=False, chunksize=1000)
+        
+        print(f"{G_}Harika! CSV'den {len(df_csv)} gecmis deprem kaydi veritabanina aktarildi.{X_}")
+        return True
+        
+    except Exception as e:
+        print(f"{R_}CSV okuma veya veritabanina yazma sirasinda hata: {e}{X_}")
+        return False
+
 def fetch_and_load_api_data(conn, tn, start_override=None):
     now=datetime.utcnow()
     end_lim=(now+timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
     cur=conn.cursor()
     fix_future_dates(conn,tn)
+    
     if start_override:
         ss=standardize_date(start_override)
         if not ss: ss='1990-01-01 00:00:00'
@@ -316,7 +379,6 @@ def classify_eq_type(df):
     if 'earthquake_type' in df.columns: df=df.drop(columns=['earthquake_type'])
     return pd.merge(df,tr,on='eventID',how='left')
 
-# DEĞİŞİKLİK: Artçı depremler "Öncü" olarak etiketlenmiyor.
 def create_labels(df, thresh=5.5, tw_days=30, r_km=50):
     df=df.sort_values('time').reset_index(drop=True)
     twns=timedelta(days=tw_days).total_seconds()*1e9
@@ -329,7 +391,6 @@ def create_labels(df, thresh=5.5, tw_days=30, r_km=50):
     eq_types = df.get('earthquake_type', pd.Series(['Tekil Deprem']*len(df))).values
     
     for i in range(len(df)):
-        # Eger bu olay bir Artci Deprem ise onu oncu olarak etiketlemiyoruz
         if eq_types[i] == 'Artci Deprem':
             continue
             
@@ -602,7 +663,6 @@ def map_by_type(dfr, fn="deprem_haritasi_tip.html"):
     add_legend(m,"Deprem Tipi (Earthquake Type)",tcm)
     m.save(fn)
 
-# DEĞİŞİKLİK: Harita renk ve eşikleri %50 ve %25 olarak güncellendi.
 def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
     if 'olasilik' not in dfr.columns: return
     dm=dfr[(dfr['mag']>=4.5)&(dfr['olasilik'].notna())].copy()
@@ -789,24 +849,31 @@ def main():
     t0=time.time()
     db="earthquakes_3_5_plus_scientific_v5.db"
     tn="earthquake_catalog"
+    csv_file="ridgecrest_catalog.csv"
     conn=None
     try:
         print(f"{C_}{'='*70}")
         print("Sismik Analiz v16 (Seismic Analysis v16)")
         print(f"{'='*70}{X_}")
 
+        db_exists = os.path.exists(db)
         conn=sqlite3.connect(db)
         new_db=setup_database(conn,tn)
 
-        if not new_db:
-            try:
-                dfc=pd.read_sql(f"SELECT * FROM {tn}",conn)
-                dfc['time']=dfc['time'].apply(standardize_date)
-                dfc.dropna(subset=['time'],inplace=True)
-                conn.execute(f"DELETE FROM {tn}")
-                dfc.to_sql(tn,conn,if_exists='append',index=False)
-                conn.commit()
-            except: pass
+        # DEĞİŞİKLİK: Veritabanı yoksa (veya yeni yaratıldıysa) CSV verilerini aktar
+        if not db_exists or new_db:
+            print(f"{C_}Veritabani yeni olusturuldu. Gecmis datalar CSV'den aktariliyor...{X_}")
+            load_historical_csv(conn, tn, csv_file)
+        else:
+            if not new_db:
+                try:
+                    dfc=pd.read_sql(f"SELECT * FROM {tn}",conn)
+                    dfc['time']=dfc['time'].apply(standardize_date)
+                    dfc.dropna(subset=['time'],inplace=True)
+                    conn.execute(f"DELETE FROM {tn}")
+                    dfc.to_sql(tn,conn,if_exists='append',index=False)
+                    conn.commit()
+                except: pass
 
         force=False
         new_ids=fetch_and_load_api_data(conn,tn)
@@ -839,7 +906,6 @@ def main():
         dfr=df.copy()
         t7=pd.to_datetime(datetime.utcnow(),utc=True)-timedelta(days=7)
         
-        # DEĞİŞİKLİK: Filtre operatörü & yerine | yapıldı. (Dinamik güncelleme için)
         rm=(dfr['time']>=t7)|(dfr['olasilik'].isnull())
         aids=set(new_ids)|set(dfr[rm]['eventID'])
 
