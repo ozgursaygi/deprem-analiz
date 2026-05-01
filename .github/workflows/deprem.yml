@@ -37,19 +37,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Modelleri ve DByi cachele
-        uses: actions/cache@v4
-        with:
-          path: |
-            earthquakes_3_5_plus_scientific_v5.db
-            xgb_v5.joblib
-            rf_v5.joblib
-            lstm_v5.keras
-            lstm_scaler_v5.joblib
-          key: deprem-state-v2-${{ github.run_id }}
-          restore-keys: |
-            deprem-state-v2-
-
       - name: Analiz scriptini calistir
         run: python DTS_66_AFAD_LIVE.py
 
@@ -68,15 +55,21 @@ jobs:
           echo "Son guncelleme (UTC): $(date -u '+%Y-%m-%d %H:%M:%S')" > docs/last_update.txt
           ls -la docs/
 
-      - name: HTMLleri repoya commit et
+      - name: Sonuclari, Modelleri ve Veritabanini repoya commit et
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Ciktilari ve veritabanini git'e ekle
           git add docs/
+          git add earthquakes_3_5_plus_scientific_v5.db || true
+          git add *.joblib *.keras || true
+          
+          # Eger bir degisiklik varsa commit et ve gonder
           if git diff --staged --quiet; then
             echo "Degisiklik yok."
           else
-            git commit -m "HTML guncellendi"
+            git commit -m "HTML, Veritabani ve Modeller otomatik guncellendi"
             git push
           fi
 
