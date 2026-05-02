@@ -628,6 +628,16 @@ def base_map(dm):
     return folium.Map(location=[dm['latitude'].mean(),dm['longitude'].mean()],
                       zoom_start=6,tiles="CartoDB positron")
 
+def add_no_cache(m):
+    """Folium haritasına tarayıcı cache'ini engelleyen meta etiketler ekler."""
+    no_cache_html = (
+        "<meta http-equiv='Cache-Control' "
+        "content='no-cache, no-store, must-revalidate, max-age=0'>"
+        "<meta http-equiv='Pragma' content='no-cache'>"
+        "<meta http-equiv='Expires' content='0'>"
+    )
+    m.get_root().header.add_child(folium.Element(no_cache_html))
+
 def map_by_type(dfr, fn="deprem_haritasi_tip.html"):
     ms=(dfr['mag']>=4.0)&(dfr['earthquake_type'].isin(
         ['Ana Deprem','Oncu Deprem','Artci Deprem']))
@@ -661,6 +671,7 @@ def map_by_type(dfr, fn="deprem_haritasi_tip.html"):
             color=clr,fill=True,fill_color=clr,fill_opacity=0.7,weight=1
         ).add_to(m)
     add_legend(m,"Deprem Tipi (Earthquake Type)",tcm)
+    add_no_cache(m)
     m.save(fn)
 
 def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
@@ -692,6 +703,7 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
         "Orta Risk (Medium Risk) >= %25 / Dusuk Guven":"orange",
         "Dusuk Risk (Low Risk) < %25":"yellow"}
     add_legend(m,"Olasilik ve Guven (Probability & Confidence)",li)
+    add_no_cache(m)
     m.save(fn)
 
 def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
@@ -785,6 +797,9 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     html=(
         "<!DOCTYPE html><html lang='tr'><head>"
         "<meta charset='UTF-8'>"
+        "<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'>"
+        "<meta http-equiv='Pragma' content='no-cache'>"
+        "<meta http-equiv='Expires' content='0'>"
         "<title>Bilimsel Sismik Risk Raporu "
         "(Scientific Seismic Risk Report)</title>"
         "<style>"
