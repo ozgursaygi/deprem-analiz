@@ -800,8 +800,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'>"
         "<meta http-equiv='Pragma' content='no-cache'>"
         "<meta http-equiv='Expires' content='0'>"
-        "<title>Bilimsel Sismik Risk Raporu "
-        "(Scientific Seismic Risk Report)</title>"
+        "<title>Sismik Risk Raporu (Seismic Risk Report)</title>"
         "<style>"
         "body{font-family:'Segoe UI',sans-serif;padding:20px;"
         "background:#f5f5f5}"
@@ -816,9 +815,9 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
 
-        "<h1>Bilimsel Sismik Risk Analiz Raporu<br>"
+        "<h1>Sismik Risk Analiz Raporu<br>"
         "<span style='font-size:0.7em;color:#555'>"
-        "Scientific Seismic Risk Analysis Report</span></h1>"
+        "Seismic Risk Analysis Report</span></h1>"
 
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | "
         f"<b>Kullanici (User):</b> {user}</p>"
@@ -832,28 +831,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "<h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3>"
         f"{tbl}"
 
-        "<div style='margin-top:20px;font-size:.9em;color:#666'>"
-
-        "<p><b>Not (Note):</b> "
-        "'Veri Yetersiz (Insufficient Data)' ifadesi, ilgili depremin "
-        "cevresinde yeterli sismik gecmis verisi bulunamadigini belirtir. "
-        "(Indicates that not enough seismic history data was found "
-        "in the surrounding area of the earthquake.)</p>"
-
-        "<p><b>Bilimsel Metodoloji (Scientific Methodology):</b> "
-        "Bu rapor, zamansal nedensellik korunan retrospektif egitim ve "
-        "prospektif test metodolojisi ile olusturulmustur. "
-        "(This report was generated using retrospective training and "
-        "prospective testing methodology that preserves "
-        "temporal causality.)</p>"
-
-        "<p><b>Model Hedefi (Model Target):</b> "
-        "Onumuzdeki 30 gun icinde, 50 km yaricapinda M&gt;=5.5 "
-        "buyuklugunde bir ana deprem olma olasiligi. "
-        "(Probability of a M&gt;=5.5 mainshock occurring within "
-        "30 days and 50 km radius.)</p>"
-
-        "</div></body></html>")
+        "</body></html>")
 
     with open("deprem_analiz_raporu_sade.html","w",encoding='utf-8') as f:
         f.write(html)
