@@ -1,4 +1,36 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .ipynb_checkpoints/
+
+# SQLite journal/WAL files (the main *.db is intentionally tracked)
 *.db-journal
+*.db-wal
+*.db-shm
+
+# Trained model artifacts (regenerated at runtime)
+*.joblib
+*.keras
+*.h5
+*.pkl
+
+# Generated HTML reports (regenerated at runtime)
+deprem_analiz_raporu_sade.html
+deprem_haritasi_olasilik.html
+deprem_haritasi_tip.html
+
+# Generated plots
+molchan_*.png
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Virtual environments
+.venv/
+venv/
+env/
