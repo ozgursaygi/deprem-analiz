@@ -47,6 +47,58 @@ ENHANCED_FEATURES = [
     'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index']
 TARGET = 'is_foreshock'
 
+# ================================================================================
+# YENİ: Bölgesel Parametreler ve Seismic Zone Tanımları
+# ================================================================================
+SEISMIC_ZONES = {
+    'Marmara': {
+        'bounds': {'lat_min': 40.5, 'lat_max': 41.5, 'lon_min': 26.5, 'lon_max': 30.5},
+        'avg_b_value': 0.95,
+        'avg_event_rate': 2.5,
+        'typical_mainshock_mag': 6.5,
+        'mag_completeness': 3.5
+    },
+    'Ege': {
+        'bounds': {'lat_min': 37.5, 'lat_max': 39.5, 'lon_min': 24.0, 'lon_max': 28.0},
+        'avg_b_value': 1.05,
+        'avg_event_rate': 3.0,
+        'typical_mainshock_mag': 6.0,
+        'mag_completeness': 3.5
+    },
+    'Akdeniz': {
+        'bounds': {'lat_min': 35.8, 'lat_max': 37.5, 'lon_min': 28.0, 'lon_max': 37.0},
+        'avg_b_value': 1.10,
+        'avg_event_rate': 2.0,
+        'typical_mainshock_mag': 5.8,
+        'mag_completeness': 3.5
+    },
+    'DoguAnadolu': {
+        'bounds': {'lat_min': 38.0, 'lat_max': 41.0, 'lon_min': 36.0, 'lon_max': 45.0},
+        'avg_b_value': 0.98,
+        'avg_event_rate': 2.8,
+        'typical_mainshock_mag': 6.8,
+        'mag_completeness': 3.5
+    }
+}
+
+# ================================================================================
+# YENİ: Bölge Tespiti Fonksiyonu
+# ================================================================================
+def detect_seismic_zone(latitude, longitude):
+    """Enlem/boylamdan depremik bölge belirle"""
+    if pd.isna(latitude) or pd.isna(longitude):
+        return 'Unknown'
+    
+    for zone_name, zone_data in SEISMIC_ZONES.items():
+        bounds = zone_data['bounds']
+        if (bounds['lat_min'] <= latitude <= bounds['lat_max'] and
+            bounds['lon_min'] <= longitude <= bounds['lon_max']):
+            return zone_name
+    return 'Other'
+
+# ================================================================================
+# NUMBA OPTİMİZED FONKSİYONLAR
+# ================================================================================
 @njit
 def haversine_distance_numba(lon1, lat1, lon2, lat2):
     R=6371.0
@@ -64,6 +116,9 @@ def get_neighbors_cKDTree(df, radius_km):
     tree=cKDTree(np.deg2rad(vc.values))
     return tree.query_ball_tree(tree, r=radius_km/6371.0)
 
+# ================================================================================
+# TARİH VE VERİ İŞLEME FONKSİYONLARI
+# ================================================================================
 def standardize_date(dv):
     if pd.isna(dv) or dv=="": return None
     try:
@@ -132,7 +187,8 @@ def setup_database(conn, tn):
           "swarm_indicator":"INTEGER","fault_distance":"REAL",
           "event_rate_24h":"REAL","event_rate_12h":"REAL","spatial_decay_index":"REAL",
           "earthquake_type":"TEXT","is_foreshock":"INTEGER",
-          "olasilik":"REAL","confidence_score":"REAL","total_uncertainty":"REAL"}
+          "olasilik":"REAL","confidence_score":"REAL","total_uncertainty":"REAL",
+          "seismic_zone":"TEXT"}
     created=False
     if not exists:
         cs=", ".join([f'"{k}" {v}' for k,v in cols.items()])
@@ -145,7 +201,6 @@ def setup_database(conn, tn):
     cur.execute(f"CREATE INDEX IF NOT EXISTS idx_time ON {tn} (time);")
     conn.commit(); return created
 
-# YENİ FONKSİYON: Veritabanı yoksa geçmişi CSV'den yükler
 def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
     if not os.path.exists(csv_path):
         print(f"{Y_}Tarihi veri dosyasi bulunamadi ({csv_path}). Atliyoruz...{X_}")
@@ -154,7 +209,6 @@ def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
         print(f"{C_}Gecmis datalar {csv_path} dosyasindan veritabanina aktariliyor...{X_}")
         df_csv = pd.read_csv(csv_path)
         
-        # Sutun isimlerini esnek (fuzzy) olarak eslestirme
         col_map = {}
         for col in df_csv.columns:
             cl = col.lower()
@@ -168,13 +222,11 @@ def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
         
         df_csv.rename(columns=col_map, inplace=True)
         
-        # Eksik olan zorunlu alanlari yarat
         if 'eventID' not in df_csv.columns:
             df_csv['eventID'] = [f"csv_id_{int(time.time())}_{i}" for i in range(len(df_csv))]
         if 'place' not in df_csv.columns:
             df_csv['place'] = "Ridgecrest Gecmis Veri (CSV)"
             
-        # Kritik sutunlar var mi kontrol et
         req = ['time', 'latitude', 'longitude', 'depth', 'mag', 'eventID']
         missing = [c for c in req if c not in df_csv.columns]
         if missing:
@@ -184,19 +236,16 @@ def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
         df_csv['time'] = df_csv['time'].apply(standardize_date)
         df_csv.dropna(subset=['time', 'mag', 'latitude', 'longitude'], inplace=True)
         
-        # Sadece M>=3.5 olanlari alalim (sistem 3.5 uzerine kurulu)
         df_csv = df_csv[df_csv['mag'] >= 3.5]
         
         if df_csv.empty:
             print(f"{Y_}CSV dosyasinda islenebilir (M>=3.5) veri bulunamadi.{X_}")
             return False
             
-        # Veritabanindaki sutunlari cek
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({tn})")
         db_cols = [row[1] for row in cur.fetchall()]
         
-        # Sadece db ile eslesen sutunlari veritabanina yaz
         insert_cols = [c for c in df_csv.columns if c in db_cols]
         df_csv[insert_cols].to_sql(tn, conn, if_exists='append', index=False, chunksize=1000)
         
@@ -265,6 +314,9 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
             print(f"{Y_}API Hatasi:{e}{X_}"); time.sleep(5)
     return []
 
+# ================================================================================
+# FEATURE CALCULATION FUNCTIONS
+# ================================================================================
 def calc_b_value(mags):
     if len(mags)<20: return None
     try:
@@ -379,11 +431,23 @@ def classify_eq_type(df):
     if 'earthquake_type' in df.columns: df=df.drop(columns=['earthquake_type'])
     return pd.merge(df,tr,on='eventID',how='left')
 
-def create_labels(df, thresh=5.5, tw_days=30, r_km=50):
+# ================================================================================
+# YENİ: PARAMETRIC FORESHOCK DEFINITION (Magnitude fark kuralı ile)
+# ================================================================================
+def create_labels_parametric(df, mag_threshold=5.5, tw_days=30, r_km=50):
+    """
+    Parametrik foreshock tanımı:
+    - Magnitude completeness göz önüne alınır
+    - Artçı depremler hariç tutulur
+    - Magnitude fark kuralı: ΔM >= 0.8
+    """
     df=df.sort_values('time').reset_index(drop=True)
     twns=timedelta(days=tw_days).total_seconds()*1e9
     ni=get_neighbors_cKDTree(df,radius_km=r_km)
-    if ni is None: df[TARGET]=0; return df
+    
+    if ni is None:
+        df[TARGET]=0
+        return df
     
     labels=np.zeros(len(df),dtype=int)
     mags=df['mag'].values
@@ -391,22 +455,216 @@ def create_labels(df, thresh=5.5, tw_days=30, r_km=50):
     eq_types = df.get('earthquake_type', pd.Series(['Tekil Deprem']*len(df))).values
     
     for i in range(len(df)):
+        # Artçı deprem ASLA öncü olamaz
         if eq_types[i] == 'Artci Deprem':
             continue
-            
+        
+        # Magnitude completeness'inin altında ise atla
+        if df.iloc[i]['mag'] < 3.5:
+            continue
+        
+        # Sonraki depremler arasında ara
         fi=[idx for idx in ni[i] if idx>i]
         if not fi: continue
         
         td=tn_[fi]-tn_[i]; itm=td<=twns
         if np.any(itm):
             ri=np.array(fi)[itm]
-            if np.max(mags[ri])>=thresh: labels[i]=1
+            max_future_mag=np.max(mags[ri])
+            
+            # Magnitude fark kuralı: ΔM >= 0.8 (sismoloji standardı)
+            mag_diff = max_future_mag - mags[i]
+            
+            if max_future_mag >= mag_threshold and mag_diff >= 0.8:
+                labels[i]=1
             
     df[TARGET]=labels
-    pr=(labels.sum()/len(labels))*100
-    print(f"{G_}Pozitif (Gercek Oncu): %{pr:.1f} ({labels.sum()}/{len(labels)}){X_}")
+    pos_rate=(labels.sum()/len(labels))*100 if len(labels)>0 else 0
+    print(f"{G_}Foreshock (Parametrik): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
+    
     return df
 
+# ================================================================================
+# YENİ: OPTIMAL FORESHOCK PARAMETERS OPTIMIZATION
+# ================================================================================
+def find_optimal_foreshock_params(df, zone_name='Global', n_trials=50):
+    """
+    Optuna ile optimal foreshock tanım parametrelerini bulur
+    ROC-AUC maximization
+    """
+    if not OPTUNA_AVAILABLE:
+        print(f"{Y_}Optuna bulunamadi, varsayilan parametreler kullaniliyor{X_}")
+        return None
+    
+    print(f"{C_}Foreshock parametreleri optimize ediliyor ({zone_name})...{X_}")
+    
+    def objective(trial):
+        mag_thresh = trial.suggest_float('mag_threshold', 5.0, 6.5, step=0.1)
+        time_window = trial.suggest_int('time_window_days', 7, 60, step=7)
+        spatial_rad = trial.suggest_int('spatial_radius_km', 25, 100, step=25)
+        
+        # Parametrelerle labels oluştur
+        try:
+            labels = create_labels_parametric(
+                df.copy(),
+                mag_threshold=mag_thresh,
+                tw_days=time_window,
+                r_km=spatial_rad
+            )
+            
+            # Labelleme başarılı oldu mu?
+            if labels[TARGET].sum() < 5:  # Çok az pozitif örnek
+                return 0.0
+            
+            # Simple Random Forest test
+            af=[f for f in ENHANCED_FEATURES if f in labels.columns]
+            if not af:
+                return 0.0
+            
+            X=labels[af].apply(safe_fill)
+            y=labels[TARGET]
+            
+            if len(X) < 20 or y.sum() < 3:
+                return 0.0
+            
+            # TimeSeriesSplit ile cross-validation
+            cv_scores=cross_val_score(
+                RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1),
+                X, y,
+                cv=TimeSeriesSplit(n_splits=3),
+                scoring='roc_auc',
+                n_jobs=-1
+            )
+            return cv_scores.mean()
+        except:
+            return 0.0
+    
+    try:
+        sampler = optuna.samplers.TPESampler(seed=42)
+        study = optuna.create_study(direction='maximize', sampler=sampler)
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+        
+        best_params = study.best_params
+        best_value = study.best_value
+        
+        print(f"{G_}✓ Optimal parametreler ({zone_name}): {best_params}{X_}")
+        print(f"{G_}  ROC-AUC Score: {best_value:.3f}{X_}")
+        
+        return best_params
+    except Exception as e:
+        print(f"{Y_}Parametre optimizasyonu başarısız: {e}{X_}")
+        return None
+
+# ================================================================================
+# YENİ: SENSITIVITY ANALYSIS FONKSIYONU
+# ================================================================================
+def sensitivity_analysis_foreshock(df):
+    """
+    Foreshock parametrelerine karşı sensitivity analizi
+    """
+    print(f"\n{C_}{'='*70}")
+    print("Sensitivity Analizi: Foreshock Parametreleri")
+    print(f"{'='*70}{X_}\n")
+    
+    mag_thresholds = [5.0, 5.3, 5.5, 5.8, 6.0]
+    time_windows = [7, 14, 30, 45, 60]
+    spatial_radii = [25, 50, 75, 100]
+    
+    results = []
+    
+    print(f"{C_}Kombinasyonlar test ediliyor... (total: {len(mag_thresholds)*len(time_windows)*len(spatial_radii)}){X_}")
+    
+    for mag_t in mag_thresholds:
+        for tw in time_windows:
+            for sr in spatial_radii:
+                try:
+                    df_test = df.copy()
+                    labels = create_labels_parametric(
+                        df_test,
+                        mag_threshold=mag_t,
+                        tw_days=tw,
+                        r_km=sr
+                    )
+                    
+                    pos_rate = labels[TARGET].sum() / len(labels) * 100 if len(labels) > 0 else 0
+                    
+                    results.append({
+                        'mag_threshold': mag_t,
+                        'time_window_days': tw,
+                        'spatial_radius_km': sr,
+                        'positive_rate_%': pos_rate,
+                        'positive_count': int(labels[TARGET].sum()),
+                        'total_count': len(labels)
+                    })
+                except:
+                    pass
+    
+    sens_df = pd.DataFrame(results)
+    
+    if sens_df.empty:
+        print(f"{R_}Sensitivity analizi başarısız oldu{X_}")
+        return None
+    
+    # İstatistikleri yazdır
+    print(f"{G_}Positive Rate İstatistikleri:{X_}")
+    print(f"  Ortalama: {sens_df['positive_rate_%'].mean():.2f}%")
+    print(f"  Std Dev: {sens_df['positive_rate_%'].std():.2f}%")
+    print(f"  Min: {sens_df['positive_rate_%'].min():.2f}%")
+    print(f"  Max: {sens_df['positive_rate_%'].max():.2f}%")
+    
+    # En iyi kombinasyon (pos_rate 10-20% aralığında)
+    optimal_range = sens_df[
+        (sens_df['positive_rate_%'] >= 10) & 
+        (sens_df['positive_rate_%'] <= 20)
+    ].sort_values('positive_rate_%')
+    
+    if not optimal_range.empty:
+        print(f"\n{G_}Optimal parametre kombinasyonları (10-20% pos rate):{X_}")
+        print(optimal_range.head(10).to_string(index=False))
+    
+    # Grafik oluştur
+    try:
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        
+        # Magnitude threshold'a karşı
+        mag_summary = sens_df.groupby('mag_threshold')['positive_rate_%'].agg(['mean', 'std'])
+        axes[0].errorbar(mag_summary.index, mag_summary['mean'], 
+                        yerr=mag_summary['std'], marker='o', capsize=5)
+        axes[0].set_xlabel('Magnitude Threshold')
+        axes[0].set_ylabel('Positive Rate (%)')
+        axes[0].set_title('Mag Threshold Sensitivity')
+        axes[0].grid(alpha=0.3)
+        
+        # Time window'a karşı
+        tw_summary = sens_df.groupby('time_window_days')['positive_rate_%'].agg(['mean', 'std'])
+        axes[1].errorbar(tw_summary.index, tw_summary['mean'], 
+                        yerr=tw_summary['std'], marker='o', capsize=5)
+        axes[1].set_xlabel('Time Window (days)')
+        axes[1].set_ylabel('Positive Rate (%)')
+        axes[1].set_title('Time Window Sensitivity')
+        axes[1].grid(alpha=0.3)
+        
+        # Spatial radius'a karşı
+        sr_summary = sens_df.groupby('spatial_radius_km')['positive_rate_%'].agg(['mean', 'std'])
+        axes[2].errorbar(sr_summary.index, sr_summary['mean'], 
+                        yerr=sr_summary['std'], marker='o', capsize=5)
+        axes[2].set_xlabel('Spatial Radius (km)')
+        axes[2].set_ylabel('Positive Rate (%)')
+        axes[2].set_title('Spatial Radius Sensitivity')
+        axes[2].grid(alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('sensitivity_analysis.png', dpi=150)
+        print(f"\n{G_}✓ Sensitivity analizi grafiği: sensitivity_analysis.png{X_}")
+        plt.close()
+    except Exception as e:
+        print(f"{Y_}Grafik oluşturulamadı: {e}{X_}")
+    
+    return sens_df
+
+# ================================================================================
+# CLASSIFICATION VE METRIC FUNCTIONS
+# ================================================================================
 def get_metrics(yt, yp, ypr):
     m={'accuracy':accuracy_score(yt,yp),
        'precision':precision_score(yt,yp,zero_division=0),
@@ -450,6 +708,9 @@ def prospective_sim(df_test, model, fl):
                     'correct':(pp>=0.5)==ao})
     return pd.DataFrame(res)
 
+# ================================================================================
+# HYPERPARAMETER OPTIMIZATION
+# ================================================================================
 def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
     if not OPTUNA_AVAILABLE: return None
     def obj(trial):
@@ -477,23 +738,69 @@ def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
         return study.best_params
     except: return None
 
-def train_sklearn(df_full, new_ids, force=False):
+# ================================================================================
+# YENİ: IMPROVED TRAINING FUNCTION (Parametrik foreshock ile)
+# ================================================================================
+def train_sklearn_improved(df_full, new_ids, force=False):
+    """
+    İyileştirilmiş train fonksiyonu: Parametrik foreshock tanımı kullanır
+    """
     models={'xgb':None,'rf':None}
-    metrics={'xgb':{},'rf':{}}; expl={'xgb':None,'rf':None}
+    metrics={'xgb':{},'rf':{}}
+    expl={'xgb':None,'rf':None}
     mp={'xgb':'xgb_v5.joblib','rf':'rf_v5.joblib'}
+    
     cutoff=df_full['time'].quantile(0.8)
     trd=df_full[df_full['time']<=cutoff].copy()
     ted=df_full[df_full['time']>cutoff].copy()
-    if len(ted)<10: return {},{},{}
+    
+    if len(ted)<10:
+        return {},{},{}
+    
     if not force and all(os.path.exists(p) for p in mp.values()):
         for k in models: models[k]=joblib.load(mp[k])
         return models,metrics,expl
-    trd=fix_numeric(trd); ted=fix_numeric(ted)
-    trl=create_labels(trd.copy()); tel=create_labels(ted.copy())
+    
+    trd=fix_numeric(trd)
+    ted=fix_numeric(ted)
+    
+    # ============ YENİ: Parametrik foreshock tanımı ============
+    print(f"{C_}Training seti için optimal foreshock parametreleri bulunuyor...{X_}")
+    opt_params = find_optimal_foreshock_params(trd, zone_name='Global', n_trials=50)
+    
+    if opt_params:
+        print(f"{C_}Bulunmuş parametrelerle labelama yapılıyor...{X_}")
+        trl = create_labels_parametric(
+            trd.copy(),
+            mag_threshold=opt_params.get('mag_threshold', 5.5),
+            tw_days=opt_params.get('time_window_days', 30),
+            r_km=opt_params.get('spatial_radius_km', 50)
+        )
+        tel = create_labels_parametric(
+            ted.copy(),
+            mag_threshold=opt_params.get('mag_threshold', 5.5),
+            tw_days=opt_params.get('time_window_days', 30),
+            r_km=opt_params.get('spatial_radius_km', 50)
+        )
+    else:
+        # Fallback: varsayılan parametreler
+        print(f"{Y_}Optimal parametreler bulunamadi, varsayilan parametreler kullaniliyor{X_}")
+        trl = create_labels_parametric(trd.copy())
+        tel = create_labels_parametric(ted.copy())
+    
+    # ============ SENSITIVITY ANALİZİ ============
+    if force:
+        print(f"{C_}Sensitivity analizi yapiliyor...{X_}")
+        sensitivity_df = sensitivity_analysis_foreshock(trd)
+        if sensitivity_df is not None:
+            sensitivity_df.to_csv('foreshock_sensitivity_analysis.csv', index=False)
+            print(f"{G_}✓ Sensitivity analysis kaydedildi: foreshock_sensitivity_analysis.csv{X_}")
+    
     af=[f for f in ENHANCED_FEATURES if f in trl.columns]
     Xtr=trl[af].apply(safe_fill); ytr=trl[TARGET]
     Xte=tel[af].apply(safe_fill); yte=tel[TARGET]
     sw=None
+    
     for mtype in ['xgb','rf']:
         bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
         if mtype=='xgb':
@@ -520,6 +827,9 @@ def train_sklearn(df_full, new_ids, force=False):
         print(f"{G_}{mtype.upper()} Hazir | AUC:{metrics[mtype]['auc']:.3f}{X_}")
     return models,metrics,expl
 
+# ================================================================================
+# LSTM TRAINING
+# ================================================================================
 def build_lstm(shape):
     return Sequential([
         Input(shape=shape),
@@ -538,8 +848,8 @@ def train_lstm(df_full, new_ids, force=False):
     trd=df_full[df_full['time']<=cutoff].copy()
     ted=df_full[df_full['time']>cutoff].copy()
     if len(ted)<10: return None,None,{}
-    trl=create_labels(fix_numeric(trd).copy())
-    tel=create_labels(fix_numeric(ted).copy())
+    trl=create_labels_parametric(fix_numeric(trd).copy())
+    tel=create_labels_parametric(fix_numeric(ted).copy())
     if trl.empty: return None,None,{}
     af=[f for f in ENHANCED_FEATURES if f in trl.columns]
     sc=StandardScaler()
@@ -566,6 +876,9 @@ def train_lstm(df_full, new_ids, force=False):
     mdl.save(mpath); joblib.dump(sc,spath)
     return mdl,sc,get_metrics(yte,(ypm>0.5).astype(int),ypm)
 
+# ================================================================================
+# PREDICTION WITH UNCERTAINTY
+# ================================================================================
 def predict_unc(dfp, models, lm, ls):
     if dfp.empty: return pd.DataFrame()
     dfp=fix_numeric(dfp)
@@ -611,6 +924,9 @@ def predict_unc(dfp, models, lm, ls):
     dpr['total_uncertainty']=100-dpr['confidence_score']
     return dpr
 
+# ================================================================================
+# MAPPING FUNCTIONS
+# ================================================================================
 def add_legend(m, title, items):
     body="".join([f'<i class="fa fa-circle" style="color:{c}"></i> {l}<br>'
                   for l,c in items.items()])
@@ -706,6 +1022,9 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
     add_no_cache(m)
     m.save(fn)
 
+# ================================================================================
+# REPORT GENERATION
+# ================================================================================
 def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     recent=dfr.sort_values('time',ascending=False).head(2000)
     filt=recent[recent['mag']>=4.0].copy()
@@ -817,13 +1136,15 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
 
         "<h1>Sismik Risk Analiz Raporu<br>"
         "<span style='font-size:0.7em;color:#555'>"
-        "Seismic Risk Analysis Report</span></h1>"
+        "Seismic Risk Analysis Report (Improved)</span></h1>"
 
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | "
         f"<b>Kullanici (User):</b> {user}</p>"
 
         f"<div class='info'>"
-        f"<b>Ozet (Summary):</b> {summary}"
+        f"<b>Ozet (Summary):</b> {summary}<br>"
+        f"<b>Deprem Oncu Tanimi (Foreshock Definition):</b> "
+        f"Parametrik (Magnitude Threshold, Time Window, Spatial Radius optimize edilmistir)"
         f"</div>"
 
         f"{perf}"
@@ -838,6 +1159,9 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     print(f"{G_}Rapor olusturuldu (Report generated).{X_}")
 
 
+# ================================================================================
+# MAIN FUNCTION
+# ================================================================================
 def main():
     t0=time.time()
     db="earthquakes_3_5_plus_scientific_v5.db"
@@ -846,14 +1170,13 @@ def main():
     conn=None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v16 (Seismic Analysis v16)")
+        print("Sismik Analiz v17 (Seismic Analysis v17 - IMPROVED)")
         print(f"{'='*70}{X_}")
 
         db_exists = os.path.exists(db)
         conn=sqlite3.connect(db)
         new_db=setup_database(conn,tn)
 
-        # DEĞİŞİKLİK: Veritabanı yoksa (veya yeni yaratıldıysa) CSV verilerini aktar
         if not db_exists or new_db:
             print(f"{C_}Veritabani yeni olusturuldu. Gecmis datalar CSV'den aktariliyor...{X_}")
             load_historical_csv(conn, tn, csv_file)
@@ -887,10 +1210,22 @@ def main():
                 print(f"{R_}Yetersiz veri (Insufficient data).{X_}")
                 return
 
+        # ============ YENİ: Bölgesel bilgi ekle ============
+        print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
+        df['seismic_zone'] = df.apply(
+            lambda row: detect_seismic_zone(row['latitude'], row['longitude']),
+            axis=1
+        )
+        zone_counts = df['seismic_zone'].value_counts()
+        print(f"{G_}Bolge Dagilimi:{X_}")
+        for zone, count in zone_counts.items():
+            print(f"  {zone}: {count} olay")
+
         df=calc_features(df)
         df=classify_eq_type(df)
 
-        models,metrics,expl=train_sklearn(df,new_ids,force=force)
+        # ============ YENİ: train_sklearn_improved'i kullan ============
+        models,metrics,expl=train_sklearn_improved(df,new_ids,force=force)
         lm,ls,lmet=train_lstm(df,new_ids,force=force)
 
         ami={**metrics}
@@ -927,7 +1262,8 @@ def main():
         gen_report(
             dfr, CURRENT_USER, CURRENT_UTC_TIME,
             f"Toplam {len(dfr)} olay analiz edildi. "
-            f"(Total {len(dfr)} events analyzed.)",
+            f"Parametrik oncu deprem tanimi kullanilmistir. "
+            f"(Total {len(dfr)} events analyzed with parametric foreshock definition.)",
             new_ids, ami, expl)
 
         elapsed=time.time()-t0
