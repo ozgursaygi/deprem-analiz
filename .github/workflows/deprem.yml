@@ -1,84 +1,119 @@
-name: Deprem Analizi (Otomatik)
+name: Deprem Analiz
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
-  workflow_dispatch:
+    - cron: '0 */6 * * *'  # Her 6 saatte bir çalışır
+  workflow_dispatch:  # Manuel tetikleme için
 
 permissions:
-  contents: write
-
-concurrency:
-  group: deprem-analiz
-  cancel-in-progress: false
+  contents: write  # Push yapabilmek için gerekli
 
 jobs:
-  run-analysis:
+  analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
+    
     steps:
-      - name: Repoyu indir
-        uses: actions/checkout@v4
-
-      - name: Python 3.11 kur
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Sistem bagimliliklari
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libgomp1
-
-      - name: Python paketlerini yukle
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Analiz scriptini calistir
-        run: python DTS_66_AFAD_LIVE.py
-
-      - name: HTML ciktilarini docs klasorune tasi
-        run: |
-          mkdir -p docs
-          mv -f deprem_haritasi_tip.html docs/ 2>/dev/null || true
-          mv -f deprem_haritasi_olasilik.html docs/ 2>/dev/null || true
-          mv -f deprem_analiz_raporu_sade.html docs/ 2>/dev/null || true
-          cat > docs/index.html << 'EOF'
-          <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8">
-          <title>Deprem Analizi</title>
-          <meta http-equiv="refresh" content="0; url=deprem_analiz_raporu_sade.html">
-          </head><body>Yonlendiriliyor...</body></html>
-          EOF
-          echo "Son guncelleme (UTC): $(date -u '+%Y-%m-%d %H:%M:%S')" > docs/last_update.txt
-          ls -la docs/
-
-      - name: Sonuclari, Modelleri ve Veritabanini repoya commit et
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    - name: Depoyu klonla
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Tüm geçmişi al (rebase için gerekli)
+    
+    - name: Python kurulumu
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: Cache pip paketleri
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Cache modeller
+      uses: actions/cache@v4
+      with:
+        path: |
+          xgb_v5.joblib
+          rf_v5.joblib
+          lstm_v5.keras
+          lstm_scaler_v5.joblib
+        key: ${{ runner.os }}-models-${{ hashFiles('earthquakes_3_5_plus_scientific_v5.db') }}
+        restore-keys: |
+          ${{ runner.os }}-models-
+    
+    - name: Bağımlılıkları yükle
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Analizi çalıştır
+      run: python DTS_66_AFAD_LIVE.py
+      env:
+        TZ: 'UTC'
+    
+    - name: Dosyaları docs klasörüne taşı
+      run: |
+        mkdir -p docs
+        cp -f deprem_analiz_raporu_sade.html docs/ 2>/dev/null || true
+        cp -f deprem_haritasi_tip.html docs/ 2>/dev/null || true
+        cp -f deprem_haritasi_olasilik.html docs/ 2>/dev/null || true
+        cp -f molchan_xgb.png docs/ 2>/dev/null || true
+        cp -f molchan_rf.png docs/ 2>/dev/null || true
+        cp -f foreshock_sensitivity_analysis.csv docs/ 2>/dev/null || true
+        cp -f sensitivity_analysis.png docs/ 2>/dev/null || true
+    
+    - name: Değişiklikleri commit ve push
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Önce uzak değişiklikleri rebase ile al
+        git pull --rebase origin main
+        
+        # Değişen dosyaları ekle
+        git add -A docs/
+        git add earthquakes_3_5_plus_scientific_v5.db
+        git add deprem_analiz_raporu_sade.html deprem_haritasi_tip.html deprem_haritasi_olasilik.html 2>/dev/null || true
+        git add molchan_xgb.png molchan_rf.png 2>/dev/null || true
+        git add foreshock_sensitivity_analysis.csv sensitivity_analysis.png 2>/dev/null || true
+        
+        # Değişiklik varsa commit yap
+        if git diff --staged --quiet; then
+          echo "Değişiklik yok, commit atlanıyor"
+        else
+          git commit -m "HTML, Veritabani ve Modeller otomatik guncellendi [skip ci]"
           
-          # Ciktilari ve veritabanini git'e ekle
-          git add docs/
-          git add earthquakes_3_5_plus_scientific_v5.db || true
-          git add *.joblib *.keras || true
-          
-          # Eger bir degisiklik varsa commit et ve gonder
-          if git diff --staged --quiet; then
-            echo "Degisiklik yok."
-          else
-            git commit -m "HTML, Veritabani ve Modeller otomatik guncellendi"
-            git push
-          fi
-
-      - name: Hata log artifact
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hata-loglari
-          path: |
-            *.png
-            *.log
-          retention-days: 7
+          # Push işlemini 3 kere dene
+          for i in 1 2 3; do
+            git push origin main && break
+            echo "Push başarısız (deneme $i/3), 10 saniye bekleniyor..."
+            sleep 10
+            git pull --rebase origin main
+          done
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Workflow özeti
+      if: always()
+      run: |
+        echo "## 📊 Deprem Analiz Özeti" >> $GITHUB_STEP_SUMMARY
+        echo "**Çalışma Zamanı:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Workflow:** ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f docs/deprem_analiz_raporu_sade.html ]; then
+          echo "✅ Rapor başarıyla oluşturuldu" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Rapor oluşturulamadı" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f docs/deprem_haritasi_tip.html ]; then
+          echo "✅ Deprem tipi haritası oluşturuldu" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f docs/deprem_haritasi_olasilik.html ]; then
+          echo "✅ Risk olasılık haritası oluşturuldu" >> $GITHUB_STEP_SUMMARY
+        fi
