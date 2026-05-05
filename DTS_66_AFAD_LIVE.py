@@ -40,6 +40,16 @@ C_ = '\033[96m'; Y_ = '\033[93m'; B_ = '\033[94m'; X_ = '\033[0m'
 CURRENT_UTC_TIME = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 CURRENT_USER = "ozgursaygi"
 
+# ================================================================================
+# SABİT BİLİMSEL PARAMETRELER (MODELDEN BAĞIMSIZ)
+# ================================================================================
+# Bu parametreler sismolojik literatüre ve uzman görüşüne dayanır.
+# Model eğitimi sırasında DEĞİŞTİRİLMEZ.
+FORESHOCK_MAG_THRESHOLD = 5.5   # Ana deprem minimum büyüklüğü
+FORESHOCK_TIME_WINDOW_DAYS = 30 # Öncü-ana deprem arası maksimum süre (gün)
+FORESHOCK_SPATIAL_RADIUS_KM = 50 # Öncü-ana deprem arası maksimum uzaklık (km)
+FORESHOCK_MIN_MAG_DIFF = 0.8    # Ana deprem, öncüden en az bu kadar büyük olmalı
+
 ENHANCED_FEATURES = [
     'mag','depth','b_value_local','event_rate_local','time_since_last',
     'mag_completeness','spatial_density','temporal_clustering',
@@ -432,15 +442,21 @@ def classify_eq_type(df):
     return pd.merge(df,tr,on='eventID',how='left')
 
 # ================================================================================
-# YENİ: PARAMETRIC FORESHOCK DEFINITION (Magnitude fark kuralı ile)
+# DÜZELTİLMİŞ: SABİT BİLİMSEL PARAMETRELERLE FORESHOCK TANIMI
 # ================================================================================
-def create_labels_parametric(df, mag_threshold=5.5, tw_days=30, r_km=50, verbose=True):
+def create_labels_parametric(df, mag_threshold=None, tw_days=None, r_km=None, verbose=True):
     """
-    Parametrik foreshock tanımı:
-    - Magnitude completeness göz önüne alınır
-    - Artçı depremler hariç tutulur
-    - Magnitude fark kuralı: ΔM >= 0.8
+    Sabit bilimsel parametrelerle foreshock etiketlemesi.
+    Parametreler model eğitiminden BAĞIMSIZDIR ve değiştirilmez.
     """
+    # Sabit parametreleri kullan (override edilmediği sürece)
+    if mag_threshold is None:
+        mag_threshold = FORESHOCK_MAG_THRESHOLD
+    if tw_days is None:
+        tw_days = FORESHOCK_TIME_WINDOW_DAYS
+    if r_km is None:
+        r_km = FORESHOCK_SPATIAL_RADIUS_KM
+    
     df=df.sort_values('time').reset_index(drop=True)
     twns=timedelta(days=tw_days).total_seconds()*1e9
     ni=get_neighbors_cKDTree(df,radius_km=r_km)
@@ -472,101 +488,30 @@ def create_labels_parametric(df, mag_threshold=5.5, tw_days=30, r_km=50, verbose
             ri=np.array(fi)[itm]
             max_future_mag=np.max(mags[ri])
             
-            # Magnitude fark kuralı: ΔM >= 0.8 (sismoloji standardı)
+            # Sabit magnitude fark kuralı
             mag_diff = max_future_mag - mags[i]
             
-            if max_future_mag >= mag_threshold and mag_diff >= 0.8:
+            if max_future_mag >= mag_threshold and mag_diff >= FORESHOCK_MIN_MAG_DIFF:
                 labels[i]=1
             
     df[TARGET]=labels
     pos_rate=(labels.sum()/len(labels))*100 if len(labels)>0 else 0
     if verbose:
-        print(f"{G_}Foreshock (Parametrik): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
+        print(f"{G_}Foreshock (Sabit Bilimsel Parametreler): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
+        print(f"{G_}  Parametreler: Mag>={mag_threshold}, Time<={tw_days}d, Dist<={r_km}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}{X_}")
     
     return df
 
 # ================================================================================
-# YENİ: OPTIMAL FORESHOCK PARAMETERS OPTIMIZATION
-# ================================================================================
-def find_optimal_foreshock_params(df, zone_name='Global', n_trials=50):
-    """
-    Optuna ile optimal foreshock tanım parametrelerini bulur
-    ROC-AUC maximization
-    """
-    if not OPTUNA_AVAILABLE:
-        print(f"{Y_}Optuna bulunamadi, varsayilan parametreler kullaniliyor{X_}")
-        return None
-    
-    print(f"{C_}Foreshock parametreleri optimize ediliyor ({zone_name})... (n_trials={n_trials}){X_}")
-    
-    def objective(trial):
-        mag_thresh = trial.suggest_float('mag_threshold', 5.0, 6.5, step=0.1)
-        time_window = trial.suggest_int('time_window_days', 7, 60, step=7)
-        spatial_rad = trial.suggest_int('spatial_radius_km', 25, 100, step=25)
-        
-        # Parametrelerle labels oluştur
-        try:
-            labels = create_labels_parametric(
-                df.copy(),
-                mag_threshold=mag_thresh,
-                tw_days=time_window,
-                r_km=spatial_rad,
-                verbose=False
-            )
-            
-            # Labelleme başarılı oldu mu?
-            if labels[TARGET].sum() < 5:  # Çok az pozitif örnek
-                return 0.0
-            
-            # Simple Random Forest test
-            af=[f for f in ENHANCED_FEATURES if f in labels.columns]
-            if not af:
-                return 0.0
-            
-            X=labels[af].apply(safe_fill)
-            y=labels[TARGET]
-            
-            if len(X) < 20 or y.sum() < 3:
-                return 0.0
-            
-            # TimeSeriesSplit ile cross-validation
-            cv_scores=cross_val_score(
-                RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1),
-                X, y,
-                cv=TimeSeriesSplit(n_splits=3),
-                scoring='roc_auc',
-                n_jobs=-1
-            )
-            return cv_scores.mean()
-        except:
-            return 0.0
-    
-    try:
-        sampler = optuna.samplers.TPESampler(seed=42)
-        study = optuna.create_study(direction='maximize', sampler=sampler)
-        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-        
-        best_params = study.best_params
-        best_value = study.best_value
-        
-        print(f"{G_}✓ Optimal parametreler ({zone_name}): {best_params}{X_}")
-        print(f"{G_}  ROC-AUC Score: {best_value:.3f}{X_}")
-        
-        return best_params
-    except Exception as e:
-        print(f"{Y_}Parametre optimizasyonu başarısız: {e}{X_}")
-        return None
-
-# ================================================================================
-# YENİ: SENSITIVITY ANALYSIS FONKSIYONU (DÜZELTİLMİŞ)
+# DÜZELTİLMİŞ: SENSITIVITY ANALİZİ (MODEL İÇERMEZ)
 # ================================================================================
 def sensitivity_analysis_foreshock(df):
     """
-    Foreshock parametrelerine karşı sensitivity analizi
-    DÜZELTİLMİŞ: Daha hızlı ve çıktı üretiyor
+    Foreshock parametrelerine karşı sensitivity analizi.
+    Bu analiz SADECE etiket dağılımını inceler, model eğitimi YAPMAZ.
     """
     print(f"\n{C_}{'='*70}")
-    print("SENSITIVITY ANALYSIS: Foreshock Parametreleri")
+    print("SENSITIVITY ANALYSIS: Foreshock Parametreleri (Modelden Bağımsız)")
     print(f"{'='*70}{X_}\n")
     
     mag_thresholds = [5.0, 5.3, 5.5, 5.8, 6.0]
@@ -584,7 +529,6 @@ def sensitivity_analysis_foreshock(df):
             for sr in spatial_radii:
                 current += 1
                 try:
-                    # Progress göster
                     progress = (current/total_combos)*100
                     print(f"\r{C_}[{progress:.1f}%] Mag:{mag_t}, TW:{tw}d, SR:{sr}km{X_}", end='', flush=True)
                     
@@ -610,7 +554,7 @@ def sensitivity_analysis_foreshock(df):
                 except Exception as e:
                     print(f"\n{R_}Hata ({mag_t}, {tw}, {sr}): {e}{X_}")
     
-    print("\n")  # Yeni satır
+    print("\n")
     
     sens_df = pd.DataFrame(results)
     
@@ -618,7 +562,6 @@ def sensitivity_analysis_foreshock(df):
         print(f"{R_}Sensitivity analizi başarısız oldu{X_}")
         return None
     
-    # İstatistikleri yazdır
     print(f"{G_}{'='*70}")
     print(f"Positive Rate İstatistikleri:")
     print(f"{'='*70}{X_}")
@@ -627,27 +570,21 @@ def sensitivity_analysis_foreshock(df):
     print(f"  Min: {sens_df['positive_rate_%'].min():.2f}%")
     print(f"  Max: {sens_df['positive_rate_%'].max():.2f}%")
     
-    # En iyi kombinasyon (pos_rate 10-20% aralığında)
-    optimal_range = sens_df[
-        (sens_df['positive_rate_%'] >= 10) & 
-        (sens_df['positive_rate_%'] <= 20)
-    ].sort_values('positive_rate_%')
-    
-    if not optimal_range.empty:
-        print(f"\n{G_}Optimal parametre kombinasyonları (10-20% pos rate):{X_}")
-        print(optimal_range.head(10).to_string(index=False))
-    else:
-        print(f"\n{Y_}Uyarı: 10-20% aralığında kombinasyon bulunamadı{X_}")
-        # En yakın olanları göster
-        close_range = sens_df.sort_values('positive_rate_%').head(10)
-        print(f"{G_}En yakın kombinasyonlar:{X_}")
-        print(close_range.to_string(index=False))
+    # Referans parametreleri vurgula
+    print(f"\n{G_}Referans (Sabit Bilimsel) Parametreler:{X_}")
+    ref_row = sens_df[
+        (sens_df['mag_threshold'] == FORESHOCK_MAG_THRESHOLD) & 
+        (sens_df['time_window_days'] == FORESHOCK_TIME_WINDOW_DAYS) & 
+        (sens_df['spatial_radius_km'] == FORESHOCK_SPATIAL_RADIUS_KM)
+    ]
+    if not ref_row.empty:
+        print(f"  Mag>={FORESHOCK_MAG_THRESHOLD}, TW={FORESHOCK_TIME_WINDOW_DAYS}d, SR={FORESHOCK_SPATIAL_RADIUS_KM}km")
+        print(f"  Positive Rate: %{ref_row['positive_rate_%'].values[0]:.2f}")
     
     # Grafik oluştur
     try:
         fig, axes = plt.subplots(1, 3, figsize=(16, 5))
         
-        # Magnitude threshold'a karşı
         mag_summary = sens_df.groupby('mag_threshold')['positive_rate_%'].agg(['mean', 'std'])
         axes[0].errorbar(mag_summary.index, mag_summary['mean'], 
                         yerr=mag_summary['std'], marker='o', capsize=5, linewidth=2, markersize=8)
@@ -655,10 +592,9 @@ def sensitivity_analysis_foreshock(df):
         axes[0].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[0].set_title('Mag Threshold Sensitivity', fontsize=13, fontweight='bold')
         axes[0].grid(alpha=0.3)
-        axes[0].axhline(y=15, color='r', linestyle='--', alpha=0.5, label='Target: 15%')
+        axes[0].axvline(x=FORESHOCK_MAG_THRESHOLD, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_MAG_THRESHOLD}')
         axes[0].legend()
         
-        # Time window'a karşı
         tw_summary = sens_df.groupby('time_window_days')['positive_rate_%'].agg(['mean', 'std'])
         axes[1].errorbar(tw_summary.index, tw_summary['mean'], 
                         yerr=tw_summary['std'], marker='s', capsize=5, linewidth=2, markersize=8)
@@ -666,10 +602,9 @@ def sensitivity_analysis_foreshock(df):
         axes[1].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[1].set_title('Time Window Sensitivity', fontsize=13, fontweight='bold')
         axes[1].grid(alpha=0.3)
-        axes[1].axhline(y=15, color='r', linestyle='--', alpha=0.5, label='Target: 15%')
+        axes[1].axvline(x=FORESHOCK_TIME_WINDOW_DAYS, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_TIME_WINDOW_DAYS}d')
         axes[1].legend()
         
-        # Spatial radius'a karşı
         sr_summary = sens_df.groupby('spatial_radius_km')['positive_rate_%'].agg(['mean', 'std'])
         axes[2].errorbar(sr_summary.index, sr_summary['mean'], 
                         yerr=sr_summary['std'], marker='^', capsize=5, linewidth=2, markersize=8)
@@ -677,10 +612,10 @@ def sensitivity_analysis_foreshock(df):
         axes[2].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[2].set_title('Spatial Radius Sensitivity', fontsize=13, fontweight='bold')
         axes[2].grid(alpha=0.3)
-        axes[2].axhline(y=15, color='r', linestyle='--', alpha=0.5, label='Target: 15%')
+        axes[2].axvline(x=FORESHOCK_SPATIAL_RADIUS_KM, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_SPATIAL_RADIUS_KM}km')
         axes[2].legend()
         
-        plt.suptitle('Foreshock Definition - Sensitivity Analysis', fontsize=14, fontweight='bold', y=1.02)
+        plt.suptitle('Foreshock Definition - Sensitivity Analysis (Modelden Bağımsız)', fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         plt.savefig('sensitivity_analysis.png', dpi=150, bbox_inches='tight')
         print(f"\n{G_}✓ Sensitivity analizi grafiği kaydedildi: sensitivity_analysis.png{X_}")
@@ -737,9 +672,13 @@ def prospective_sim(df_test, model, fl):
     return pd.DataFrame(res)
 
 # ================================================================================
-# HYPERPARAMETER OPTIMIZATION
+# HYPERPARAMETER OPTIMIZATION (SADECE MODEL PARAMETRELERİ İÇİN)
 # ================================================================================
 def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
+    """
+    Bu fonksiyon SADECE model hiperparametrelerini optimize eder.
+    Etiket tanımına DOKUNMAZ.
+    """
     if not OPTUNA_AVAILABLE: return None
     def obj(trial):
         if mt=='xgb':
@@ -767,11 +706,12 @@ def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
     except: return None
 
 # ================================================================================
-# YENİ: IMPROVED TRAINING FUNCTION (Parametrik foreshock ile)
+# DÜZELTİLMİŞ: TRAINING (SABİT ETİKETLER KULLANIR)
 # ================================================================================
 def train_sklearn_improved(df_full, new_ids, force=False):
     """
-    İyileştirilmiş train fonksiyonu: Parametrik foreshock tanımı kullanır
+    İyileştirilmiş train fonksiyonu: SABİT bilimsel parametrelerle etiketleme yapar.
+    Model, etiket tanımını DEĞİŞTİRMEZ.
     """
     models={'xgb':None,'rf':None}
     metrics={'xgb':{},'rf':{}}
@@ -792,32 +732,15 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     trd=fix_numeric(trd)
     ted=fix_numeric(ted)
     
-    # ============ YENİ: Parametrik foreshock tanımı ============
-    print(f"{C_}Training seti için optimal foreshock parametreleri bulunuyor...{X_}")
-    opt_params = find_optimal_foreshock_params(trd, zone_name='Global', n_trials=50)
+    # ============ DÜZELTİLDİ: Sabit bilimsel parametrelerle etiketleme ============
+    print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
+    print(f"{C_}  Parametreler: Mag>={FORESHOCK_MAG_THRESHOLD}, TW={FORESHOCK_TIME_WINDOW_DAYS}d, SR={FORESHOCK_SPATIAL_RADIUS_KM}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}{X_}")
     
-    if opt_params:
-        print(f"{C_}Bulunmuş parametrelerle labelama yapılıyor...{X_}")
-        trl = create_labels_parametric(
-            trd.copy(),
-            mag_threshold=opt_params.get('mag_threshold', 5.5),
-            tw_days=opt_params.get('time_window_days', 30),
-            r_km=opt_params.get('spatial_radius_km', 50)
-        )
-        tel = create_labels_parametric(
-            ted.copy(),
-            mag_threshold=opt_params.get('mag_threshold', 5.5),
-            tw_days=opt_params.get('time_window_days', 30),
-            r_km=opt_params.get('spatial_radius_km', 50)
-        )
-    else:
-        # Fallback: varsayılan parametreler
-        print(f"{Y_}Optimal parametreler bulunamadi, varsayilan parametreler kullaniliyor{X_}")
-        trl = create_labels_parametric(trd.copy())
-        tel = create_labels_parametric(ted.copy())
+    trl = create_labels_parametric(trd.copy())
+    tel = create_labels_parametric(ted.copy())
     
-    # ============ SENSITIVITY ANALİZİ (HER ZAMAN ÇALIŞ) ============
-    print(f"{C_}Sensitivity analizi yapiliyor...{X_}")
+    # ============ SENSITIVITY ANALİZİ (SADECE ETİKET DAĞILIMI) ============
+    print(f"{C_}Sensitivity analizi yapiliyor (modelden bağımsız)...{X_}")
     sensitivity_df = sensitivity_analysis_foreshock(trd)
     if sensitivity_df is not None:
         sensitivity_df.to_csv('foreshock_sensitivity_analysis.csv', index=False)
@@ -829,6 +752,7 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     sw=None
     
     for mtype in ['xgb','rf']:
+        # SADECE model hiperparametrelerini optimize et, etiketlere dokunma
         bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
         if mtype=='xgb':
             mdl=XGBClassifier(**(bp or {'n_estimators':300,'max_depth':8,
@@ -875,6 +799,7 @@ def train_lstm(df_full, new_ids, force=False):
     trd=df_full[df_full['time']<=cutoff].copy()
     ted=df_full[df_full['time']>cutoff].copy()
     if len(ted)<10: return None,None,{}
+    # Sabit bilimsel parametrelerle etiketleme
     trl=create_labels_parametric(fix_numeric(trd).copy())
     tel=create_labels_parametric(fix_numeric(ted).copy())
     if trl.empty: return None,None,{}
@@ -1163,7 +1088,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
 
         "<h1>Sismik Risk Analiz Raporu<br>"
         "<span style='font-size:0.7em;color:#555'>"
-        "Seismic Risk Analysis Report (Improved v17)</span></h1>"
+        "Seismic Risk Analysis Report (Improved v17 - Sabit Bilimsel Etiketler)</span></h1>"
 
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | "
         f"<b>Kullanici (User):</b> {user}</p>"
@@ -1171,8 +1096,10 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
         f"<b>Deprem Oncu Tanimi (Foreshock Definition):</b> "
-        f"Parametrik - Magnitude Threshold, Time Window, Spatial Radius "
-        f"Optuna ile optimize edilmistir. Magnitude fark kurali: ΔM ≥ 0.8"
+        f"Sabit bilimsel parametreler (Mag>={FORESHOCK_MAG_THRESHOLD}, "
+        f"Time<={FORESHOCK_TIME_WINDOW_DAYS}gün, Dist<={FORESHOCK_SPATIAL_RADIUS_KM}km, "
+        f"ΔM>={FORESHOCK_MIN_MAG_DIFF}). "
+        f"Bu parametreler model eğitiminden bağımsızdır ve değiştirilmez."
         f"</div>"
 
         f"{perf}"
@@ -1198,7 +1125,7 @@ def main():
     conn=None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v17 (Seismic Analysis v17 - IMPROVED FORESHOCK DEFINITION)")
+        print("Sismik Analiz v17 (Seismic Analysis v17 - SABİT BİLİMSEL ETİKETLER)")
         print(f"{'='*70}{X_}")
 
         db_exists = os.path.exists(db)
@@ -1238,7 +1165,7 @@ def main():
                 print(f"{R_}Yetersiz veri (Insufficient data).{X_}")
                 return
 
-        # ============ YENİ: Bölgesel bilgi ekle ============
+        # Bölgesel bilgi ekle
         print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
         df['seismic_zone'] = df.apply(
             lambda row: detect_seismic_zone(row['latitude'], row['longitude']),
@@ -1252,7 +1179,7 @@ def main():
         df=calc_features(df)
         df=classify_eq_type(df)
 
-        # ============ YENİ: train_sklearn_improved'i kullan ============
+        # Sabit bilimsel etiketlerle eğitim
         models,metrics,expl=train_sklearn_improved(df,new_ids,force=force)
         lm,ls,lmet=train_lstm(df,new_ids,force=force)
 
@@ -1290,8 +1217,8 @@ def main():
         gen_report(
             dfr, CURRENT_USER, CURRENT_UTC_TIME,
             f"Toplam {len(dfr)} olay analiz edildi. "
-            f"Parametrik oncu deprem tanimi (Optuna ile optimize) kullanilmistir. "
-            f"(Total {len(dfr)} events analyzed with optimized parametric foreshock definition.)",
+            f"Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. "
+            f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition.)",
             new_ids, ami, expl)
 
         elapsed=time.time()-t0
@@ -1301,8 +1228,8 @@ def main():
         print(f"{'='*70}{X_}")
         
         print(f"\n{G_}Üretilen Dosyalar (Generated Files):{X_}")
-        print(f"  ✓ foreshock_sensitivity_analysis.csv")
-        print(f"  ✓ sensitivity_analysis.png")
+        print(f"  ✓ foreshock_sensitivity_analysis.csv (etiket dağılım analizi)")
+        print(f"  ✓ sensitivity_analysis.png (parametre duyarlılık grafiği)")
         print(f"  ✓ deprem_analiz_raporu_sade.html")
         print(f"  ✓ deprem_haritasi_tip.html")
         print(f"  ✓ deprem_haritasi_olasilik.html")
