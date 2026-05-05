@@ -45,6 +45,21 @@ Asagidaki dosyalar `.gitignore` ile haric tutulur ve ilk calistirmada otomatik o
 - **AFAD apiv2** — Canli sismik katalog (`https://deprem.afad.gov.tr/apiv2/event/filter`)
 - **`ridgecrest_catalog.csv`** — Tarihi referans katalog (repoda mevcut)
 
+## Öncü Deprem Tanımı (Foreshock Definition)
+
+Bir depremin "öncü (foreshock)" sayılması için aşağıdaki **tüm koşullar** sağlanmalıdır:
+
+| Parametre | Değer | Açıklama |
+|-----------|-------|-----------|
+| **Magnitude eşiği** | ≥ 5.5 (optimize edilebilir) | Ana deprem büyüklüğü bu değerin üzerinde olmalı |
+| **Zaman penceresi** | ≤ 30 gün (optimize) | Öncü ile ana deprem arasındaki süre |
+| **Uzamsal mesafe** | ≤ 50 km (optimize) | Öncü ile ana deprem arasındaki uzaklık |
+| **Magnitude farkı (ΔM)** | ≥ 0.8 | Ana deprem, öncüden en az 0.8 büyük olmalı |
+| **Artçı olmama** | Evet | "Artçı" olarak etiketlenmiş depremler öncü sayılmaz |
+| **Eksiklik alt sınırı** | M ≥ 3.5 | Daha küçük depremler değerlendirmeye alınmaz |
+
+Bu tanım, `create_labels_parametric()` fonksiyonunda uygulanmıştır. Parametreler Optuna ile ROC-AUC maksimize edilerek **otomatik optimize edilir** (`find_optimal_foreshock_params()`). Duyarlılık analizi `sensitivity_analysis_foreshock()` ile yapılır.
+
 ## Modeller (Models)
 
 - **XGBoost** + **Random Forest** (Optuna ile hiperparametre optimizasyonu, Platt sigmoid kalibrasyon)
