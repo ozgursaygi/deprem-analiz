@@ -1,119 +1,68 @@
-name: Deprem Analiz
+name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *'  # Her 12 saatte bir
-  workflow_dispatch:
-  
-permissions:
-  contents: write  # Push yapabilmek için gerekli
+    - cron: '0 0 * * *' # Her gün gece yarısı çalışır (İhtiyaca göre değiştirilebilir)
+  workflow_dispatch: # Manuel tetikleme için
 
 jobs:
-  analyze:
+  build:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Depoyu klonla
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Tüm geçmişi al (rebase için gerekli)
-    
-    - name: Python kurulumu
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Cache pip paketleri
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
-    - name: Cache modeller
-      uses: actions/cache@v4
-      with:
-        path: |
-          xgb_v5.joblib
-          rf_v5.joblib
-          lstm_v5.keras
-          lstm_scaler_v5.joblib
-        key: ${{ runner.os }}-models-${{ hashFiles('earthquakes_3_5_plus_scientific_v5.db') }}
-        restore-keys: |
-          ${{ runner.os }}-models-
-    
-    - name: Bağımlılıkları yükle
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    - name: Analizi çalıştır
-      run: python DTS_66_AFAD_LIVE.py
-      env:
-        TZ: 'UTC'
-    
-    - name: Dosyaları docs klasörüne taşı
-      run: |
-        mkdir -p docs
-        cp -f deprem_analiz_raporu_sade.html docs/ 2>/dev/null || true
-        cp -f deprem_haritasi_tip.html docs/ 2>/dev/null || true
-        cp -f deprem_haritasi_olasilik.html docs/ 2>/dev/null || true
-        cp -f molchan_xgb.png docs/ 2>/dev/null || true
-        cp -f molchan_rf.png docs/ 2>/dev/null || true
-        cp -f foreshock_sensitivity_analysis.csv docs/ 2>/dev/null || true
-        cp -f sensitivity_analysis.png docs/ 2>/dev/null || true
-    
-    - name: Değişiklikleri commit ve push
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        # Önce uzak değişiklikleri rebase ile al
-        git pull --rebase origin main
-        
-        # Değişen dosyaları ekle
-        git add -A docs/
-        git add earthquakes_3_5_plus_scientific_v5.db
-        git add deprem_analiz_raporu_sade.html deprem_haritasi_tip.html deprem_haritasi_olasilik.html 2>/dev/null || true
-        git add molchan_xgb.png molchan_rf.png 2>/dev/null || true
-        git add foreshock_sensitivity_analysis.csv sensitivity_analysis.png 2>/dev/null || true
-        
-        # Değişiklik varsa commit yap
-        if git diff --staged --quiet; then
-          echo "Değişiklik yok, commit atlanıyor"
-        else
-          git commit -m "HTML, Veritabani ve Modeller otomatik guncellendi [skip ci]"
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Tüm geçmişi çekmek rebase hatalarını azaltır
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Analysis Script
+        run: python DTS_66_AFAD_LIVE.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Push işlemini 3 kere dene
-          for i in 1 2 3; do
-            git push origin main && break
-            echo "Push başarısız (deneme $i/3), 10 saniye bekleniyor..."
-            sleep 10
-            git pull --rebase origin main
-          done
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Workflow özeti
-      if: always()
-      run: |
-        echo "## 📊 Deprem Analiz Özeti" >> $GITHUB_STEP_SUMMARY
-        echo "**Çalışma Zamanı:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-        echo "**Workflow:** ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -f docs/deprem_analiz_raporu_sade.html ]; then
-          echo "✅ Rapor başarıyla oluşturuldu" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "❌ Rapor oluşturulamadı" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if [ -f docs/deprem_haritasi_tip.html ]; then
-          echo "✅ Deprem tipi haritası oluşturuldu" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if [ -f docs/deprem_haritasi_olasilik.html ]; then
-          echo "✅ Risk olasılık haritası oluşturuldu" >> $GITHUB_STEP_SUMMARY
-        fi
+          # 1. Değişen dosyaları ekle
+          git add -A docs/
+          git add earthquakes_3_5_plus_scientific_v5.db
+          git add deprem_analiz_raporu_sade.html deprem_haritasi_tip.html deprem_haritasi_olasilik.html 2>/dev/null || true
+          git add molchan_xgb.png molchan_rf.png 2>/dev/null || true
+          git add foreshock_sensitivity_analysis.csv sensitivity_analysis.png 2>/dev/null || true
+          
+          # 2. Değişiklik kontrolü ve Commit
+          if git diff --staged --quiet; then
+            echo "Değişiklik yok, işlem atlanıyor."
+          else
+            git commit -m "Otomatik veri ve analiz güncellemesi [skip ci]"
+            
+            # 3. Güvenli Push Döngüsü (Hata aldığın kısım düzeltildi)
+            for i in 1 2 3; do
+              echo "Push denemesi $i..."
+              # Önce commit yapıldığı için rebase artık hata vermez
+              git pull --rebase origin main
+              
+              if git push origin main; then
+                echo "Başarıyla güncellendi."
+                exit 0
+              fi
+              
+              echo "Push başarısız, 10 saniye bekleniyor..."
+              sleep 10
+            done
+            
+            echo "3 deneme sonunda push yapılamadı."
+            exit 1
+          fi
