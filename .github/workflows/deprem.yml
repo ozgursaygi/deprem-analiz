@@ -2,9 +2,9 @@ name: Deprem Analiz
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Her 6 saatte bir çalışır
-  workflow_dispatch:  # Manuel tetikleme için
-
+    - cron: '0 */12 * * *'  # Her 12 saatte bir
+  workflow_dispatch:
+  
 permissions:
   contents: write  # Push yapabilmek için gerekli
 
