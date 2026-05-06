@@ -19,6 +19,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, roc_auc_score, brier_score_loss, roc_curve)
+from sklearn.utils.class_weight import compute_class_weight
 from xgboost import XGBClassifier
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, BatchNormalization
@@ -43,12 +44,10 @@ CURRENT_USER = "ozgursaygi"
 # ================================================================================
 # SABİT BİLİMSEL PARAMETRELER (MODELDEN BAĞIMSIZ)
 # ================================================================================
-# Bu parametreler sismolojik literatüre ve uzman görüşüne dayanır.
-# Model eğitimi sırasında DEĞİŞTİRİLMEZ.
-FORESHOCK_MAG_THRESHOLD = 5.5   # Ana deprem minimum büyüklüğü
-FORESHOCK_TIME_WINDOW_DAYS = 30 # Öncü-ana deprem arası maksimum süre (gün)
-FORESHOCK_SPATIAL_RADIUS_KM = 50 # Öncü-ana deprem arası maksimum uzaklık (km)
-FORESHOCK_MIN_MAG_DIFF = 0.8    # Ana deprem, öncüden en az bu kadar büyük olmalı
+FORESHOCK_MAG_THRESHOLD = 5.5
+FORESHOCK_TIME_WINDOW_DAYS = 30
+FORESHOCK_SPATIAL_RADIUS_KM = 50
+FORESHOCK_MIN_MAG_DIFF = 0.8
 
 ENHANCED_FEATURES = [
     'mag','depth','b_value_local','event_rate_local','time_since_last',
@@ -57,9 +56,6 @@ ENHANCED_FEATURES = [
     'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index']
 TARGET = 'is_foreshock'
 
-# ================================================================================
-# YENİ: Bölgesel Parametreler ve Seismic Zone Tanımları
-# ================================================================================
 SEISMIC_ZONES = {
     'Marmara': {
         'bounds': {'lat_min': 40.5, 'lat_max': 41.5, 'lon_min': 26.5, 'lon_max': 30.5},
@@ -91,14 +87,9 @@ SEISMIC_ZONES = {
     }
 }
 
-# ================================================================================
-# YENİ: Bölge Tespiti Fonksiyonu
-# ================================================================================
 def detect_seismic_zone(latitude, longitude):
-    """Enlem/boylamdan depremik bölge belirle"""
     if pd.isna(latitude) or pd.isna(longitude):
         return 'Unknown'
-    
     for zone_name, zone_data in SEISMIC_ZONES.items():
         bounds = zone_data['bounds']
         if (bounds['lat_min'] <= latitude <= bounds['lat_max'] and
@@ -106,9 +97,6 @@ def detect_seismic_zone(latitude, longitude):
             return zone_name
     return 'Other'
 
-# ================================================================================
-# NUMBA OPTİMİZED FONKSİYONLAR
-# ================================================================================
 @njit
 def haversine_distance_numba(lon1, lat1, lon2, lat2):
     R=6371.0
@@ -126,9 +114,6 @@ def get_neighbors_cKDTree(df, radius_km):
     tree=cKDTree(np.deg2rad(vc.values))
     return tree.query_ball_tree(tree, r=radius_km/6371.0)
 
-# ================================================================================
-# TARİH VE VERİ İŞLEME FONKSİYONLARI
-# ================================================================================
 def standardize_date(dv):
     if pd.isna(dv) or dv=="": return None
     try:
@@ -218,7 +203,6 @@ def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
     try:
         print(f"{C_}Gecmis datalar {csv_path} dosyasindan veritabanina aktariliyor...{X_}")
         df_csv = pd.read_csv(csv_path)
-        
         col_map = {}
         for col in df_csv.columns:
             cl = col.lower()
@@ -229,39 +213,29 @@ def load_historical_csv(conn, tn, csv_path="ridgecrest_catalog.csv"):
             elif 'dep' in cl: col_map[col] = 'depth'
             elif 'id' in cl and 'grid' not in cl: col_map[col] = 'eventID'
             elif 'place' in cl or 'loc' in cl: col_map[col] = 'place'
-        
         df_csv.rename(columns=col_map, inplace=True)
-        
         if 'eventID' not in df_csv.columns:
             df_csv['eventID'] = [f"csv_id_{int(time.time())}_{i}" for i in range(len(df_csv))]
         if 'place' not in df_csv.columns:
             df_csv['place'] = "Ridgecrest Gecmis Veri (CSV)"
-            
         req = ['time', 'latitude', 'longitude', 'depth', 'mag', 'eventID']
         missing = [c for c in req if c not in df_csv.columns]
         if missing:
             print(f"{R_}CSV dosyasinda zorunlu sutunlar eksik: {missing}{X_}")
             return False
-            
         df_csv['time'] = df_csv['time'].apply(standardize_date)
         df_csv.dropna(subset=['time', 'mag', 'latitude', 'longitude'], inplace=True)
-        
         df_csv = df_csv[df_csv['mag'] >= 3.5]
-        
         if df_csv.empty:
             print(f"{Y_}CSV dosyasinda islenebilir (M>=3.5) veri bulunamadi.{X_}")
             return False
-            
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({tn})")
         db_cols = [row[1] for row in cur.fetchall()]
-        
         insert_cols = [c for c in df_csv.columns if c in db_cols]
         df_csv[insert_cols].to_sql(tn, conn, if_exists='append', index=False, chunksize=1000)
-        
         print(f"{G_}Harika! CSV'den {len(df_csv)} gecmis deprem kaydi veritabanina aktarildi.{X_}")
         return True
-        
     except Exception as e:
         print(f"{R_}CSV okuma veya veritabanina yazma sirasinda hata: {e}{X_}")
         return False
@@ -271,7 +245,6 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
     end_lim=(now+timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
     cur=conn.cursor()
     fix_future_dates(conn,tn)
-    
     if start_override:
         ss=standardize_date(start_override)
         if not ss: ss='1990-01-01 00:00:00'
@@ -287,12 +260,10 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
                     ss=(ldt+timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
             except: ss='1990-01-01 00:00:00'
         else: ss='1990-01-01 00:00:00'
-
     api_s=pd.to_datetime(ss).strftime('%Y-%m-%d %H:%M:%S')
     api_e=pd.to_datetime(end_lim).strftime('%Y-%m-%d %H:%M:%S')
     if api_s>api_e:
         api_s=(now-timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-
     params={'start':api_s,'end':api_e,'orderby':'time-asc','minmag':'3.5'}
     for att in range(5):
         try:
@@ -324,9 +295,6 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
             print(f"{Y_}API Hatasi:{e}{X_}"); time.sleep(5)
     return []
 
-# ================================================================================
-# FEATURE CALCULATION FUNCTIONS
-# ================================================================================
 def calc_b_value(mags):
     if len(mags)<20: return None
     try:
@@ -366,16 +334,13 @@ def calc_features(df_all):
         pi=[i for i in ni[si] if dfs.loc[i,'time']<=ct]
         if not pi: continue
         le=dfs.iloc[pi]
-        
         t30=ct-timedelta(days=30)
         t24h=ct-timedelta(hours=24)
         t12h=ct-timedelta(hours=12)
-        
         re=le[le['time']>=t30]
         er=len(re)/30.0
         er_24h=len(le[le['time']>=t24h])
         er_12h=len(le[le['time']>=t12h])
-        
         decay_idx = 0.0
         if len(re) > 0:
             rlats = np.radians(re['latitude'].values)
@@ -388,7 +353,6 @@ def calc_features(df_all):
             c_dist = 2 * np.arcsin(np.sqrt(a))
             dists = 6371.0 * c_dist
             decay_idx = np.sum(np.exp(-dists / 10.0))
-            
         bv=calc_b_value(le['mag'].values)
         pe=le[le['time']<ct]
         ts=(ct-pe['time'].max()).total_seconds()/3600 if not pe.empty else None
@@ -407,7 +371,6 @@ def calc_features(df_all):
         faults=np.array([[40.7,29.9],[38.4,27.1],[39.6,41.0]])
         fd=[haversine_distance(row['latitude'],row['longitude'],f[0],f[1]) for f in faults]
         mfd=min(fd) if fd else None
-        
         ups.append({'eventID':eid,'b_value_local':bv,'event_rate_local':er,
             'time_since_last':ts,'mag_completeness':mc,'spatial_density':sd,
             'temporal_clustering':tc,'mag_trend':mt,'depth_clustering':dc,
@@ -441,89 +404,55 @@ def classify_eq_type(df):
     if 'earthquake_type' in df.columns: df=df.drop(columns=['earthquake_type'])
     return pd.merge(df,tr,on='eventID',how='left')
 
-# ================================================================================
-# DÜZELTİLMİŞ: SABİT BİLİMSEL PARAMETRELERLE FORESHOCK TANIMI
-# ================================================================================
 def create_labels_parametric(df, mag_threshold=None, tw_days=None, r_km=None, verbose=True):
-    """
-    Sabit bilimsel parametrelerle foreshock etiketlemesi.
-    Parametreler model eğitiminden BAĞIMSIZDIR ve değiştirilmez.
-    """
-    # Sabit parametreleri kullan (override edilmediği sürece)
     if mag_threshold is None:
         mag_threshold = FORESHOCK_MAG_THRESHOLD
     if tw_days is None:
         tw_days = FORESHOCK_TIME_WINDOW_DAYS
     if r_km is None:
         r_km = FORESHOCK_SPATIAL_RADIUS_KM
-    
     df=df.sort_values('time').reset_index(drop=True)
     twns=timedelta(days=tw_days).total_seconds()*1e9
     ni=get_neighbors_cKDTree(df,radius_km=r_km)
-    
     if ni is None:
         df[TARGET]=0
         return df
-    
     labels=np.zeros(len(df),dtype=int)
     mags=df['mag'].values
     tn_=df['time'].astype(np.int64).values
     eq_types = df.get('earthquake_type', pd.Series(['Tekil Deprem']*len(df))).values
-    
     for i in range(len(df)):
-        # Artçı deprem ASLA öncü olamaz
         if eq_types[i] == 'Artci Deprem':
             continue
-        
-        # Magnitude completeness'inin altında ise atla
         if df.iloc[i]['mag'] < 3.5:
             continue
-        
-        # Sonraki depremler arasında ara
         fi=[idx for idx in ni[i] if idx>i]
         if not fi: continue
-        
         td=tn_[fi]-tn_[i]; itm=td<=twns
         if np.any(itm):
             ri=np.array(fi)[itm]
             max_future_mag=np.max(mags[ri])
-            
-            # Sabit magnitude fark kuralı
             mag_diff = max_future_mag - mags[i]
-            
             if max_future_mag >= mag_threshold and mag_diff >= FORESHOCK_MIN_MAG_DIFF:
                 labels[i]=1
-            
     df[TARGET]=labels
     pos_rate=(labels.sum()/len(labels))*100 if len(labels)>0 else 0
     if verbose:
         print(f"{G_}Foreshock (Sabit Bilimsel Parametreler): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
         print(f"{G_}  Parametreler: Mag>={mag_threshold}, Time<={tw_days}d, Dist<={r_km}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}{X_}")
-    
     return df
 
-# ================================================================================
-# DÜZELTİLMİŞ: SENSITIVITY ANALİZİ (MODEL İÇERMEZ)
-# ================================================================================
 def sensitivity_analysis_foreshock(df):
-    """
-    Foreshock parametrelerine karşı sensitivity analizi.
-    Bu analiz SADECE etiket dağılımını inceler, model eğitimi YAPMAZ.
-    """
     print(f"\n{C_}{'='*70}")
     print("SENSITIVITY ANALYSIS: Foreshock Parametreleri (Modelden Bağımsız)")
     print(f"{'='*70}{X_}\n")
-    
     mag_thresholds = [5.0, 5.3, 5.5, 5.8, 6.0]
     time_windows = [7, 14, 30, 45, 60]
     spatial_radii = [25, 50, 75, 100]
-    
     results = []
     total_combos = len(mag_thresholds)*len(time_windows)*len(spatial_radii)
     current = 0
-    
     print(f"{C_}Kombinasyonlar test ediliyor... (total: {total_combos}){X_}\n")
-    
     for mag_t in mag_thresholds:
         for tw in time_windows:
             for sr in spatial_radii:
@@ -531,18 +460,9 @@ def sensitivity_analysis_foreshock(df):
                 try:
                     progress = (current/total_combos)*100
                     print(f"\r{C_}[{progress:.1f}%] Mag:{mag_t}, TW:{tw}d, SR:{sr}km{X_}", end='', flush=True)
-                    
                     df_test = df.copy()
-                    labels = create_labels_parametric(
-                        df_test,
-                        mag_threshold=mag_t,
-                        tw_days=tw,
-                        r_km=sr,
-                        verbose=False
-                    )
-                    
+                    labels = create_labels_parametric(df_test, mag_threshold=mag_t, tw_days=tw, r_km=sr, verbose=False)
                     pos_rate = labels[TARGET].sum() / len(labels) * 100 if len(labels) > 0 else 0
-                    
                     results.append({
                         'mag_threshold': mag_t,
                         'time_window_days': tw,
@@ -553,15 +473,11 @@ def sensitivity_analysis_foreshock(df):
                     })
                 except Exception as e:
                     print(f"\n{R_}Hata ({mag_t}, {tw}, {sr}): {e}{X_}")
-    
     print("\n")
-    
     sens_df = pd.DataFrame(results)
-    
     if sens_df.empty:
         print(f"{R_}Sensitivity analizi başarısız oldu{X_}")
         return None
-    
     print(f"{G_}{'='*70}")
     print(f"Positive Rate İstatistikleri:")
     print(f"{'='*70}{X_}")
@@ -569,8 +485,6 @@ def sensitivity_analysis_foreshock(df):
     print(f"  Std Dev: {sens_df['positive_rate_%'].std():.2f}%")
     print(f"  Min: {sens_df['positive_rate_%'].min():.2f}%")
     print(f"  Max: {sens_df['positive_rate_%'].max():.2f}%")
-    
-    # Referans parametreleri vurgula
     print(f"\n{G_}Referans (Sabit Bilimsel) Parametreler:{X_}")
     ref_row = sens_df[
         (sens_df['mag_threshold'] == FORESHOCK_MAG_THRESHOLD) & 
@@ -580,41 +494,32 @@ def sensitivity_analysis_foreshock(df):
     if not ref_row.empty:
         print(f"  Mag>={FORESHOCK_MAG_THRESHOLD}, TW={FORESHOCK_TIME_WINDOW_DAYS}d, SR={FORESHOCK_SPATIAL_RADIUS_KM}km")
         print(f"  Positive Rate: %{ref_row['positive_rate_%'].values[0]:.2f}")
-    
-    # Grafik oluştur
     try:
         fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-        
         mag_summary = sens_df.groupby('mag_threshold')['positive_rate_%'].agg(['mean', 'std'])
-        axes[0].errorbar(mag_summary.index, mag_summary['mean'], 
-                        yerr=mag_summary['std'], marker='o', capsize=5, linewidth=2, markersize=8)
+        axes[0].errorbar(mag_summary.index, mag_summary['mean'], yerr=mag_summary['std'], marker='o', capsize=5, linewidth=2, markersize=8)
         axes[0].set_xlabel('Magnitude Threshold', fontsize=12)
         axes[0].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[0].set_title('Mag Threshold Sensitivity', fontsize=13, fontweight='bold')
         axes[0].grid(alpha=0.3)
         axes[0].axvline(x=FORESHOCK_MAG_THRESHOLD, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_MAG_THRESHOLD}')
         axes[0].legend()
-        
         tw_summary = sens_df.groupby('time_window_days')['positive_rate_%'].agg(['mean', 'std'])
-        axes[1].errorbar(tw_summary.index, tw_summary['mean'], 
-                        yerr=tw_summary['std'], marker='s', capsize=5, linewidth=2, markersize=8)
+        axes[1].errorbar(tw_summary.index, tw_summary['mean'], yerr=tw_summary['std'], marker='s', capsize=5, linewidth=2, markersize=8)
         axes[1].set_xlabel('Time Window (days)', fontsize=12)
         axes[1].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[1].set_title('Time Window Sensitivity', fontsize=13, fontweight='bold')
         axes[1].grid(alpha=0.3)
         axes[1].axvline(x=FORESHOCK_TIME_WINDOW_DAYS, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_TIME_WINDOW_DAYS}d')
         axes[1].legend()
-        
         sr_summary = sens_df.groupby('spatial_radius_km')['positive_rate_%'].agg(['mean', 'std'])
-        axes[2].errorbar(sr_summary.index, sr_summary['mean'], 
-                        yerr=sr_summary['std'], marker='^', capsize=5, linewidth=2, markersize=8)
+        axes[2].errorbar(sr_summary.index, sr_summary['mean'], yerr=sr_summary['std'], marker='^', capsize=5, linewidth=2, markersize=8)
         axes[2].set_xlabel('Spatial Radius (km)', fontsize=12)
         axes[2].set_ylabel('Positive Rate (%)', fontsize=12)
         axes[2].set_title('Spatial Radius Sensitivity', fontsize=13, fontweight='bold')
         axes[2].grid(alpha=0.3)
         axes[2].axvline(x=FORESHOCK_SPATIAL_RADIUS_KM, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_SPATIAL_RADIUS_KM}km')
         axes[2].legend()
-        
         plt.suptitle('Foreshock Definition - Sensitivity Analysis (Modelden Bağımsız)', fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         plt.savefig('sensitivity_analysis.png', dpi=150, bbox_inches='tight')
@@ -622,12 +527,8 @@ def sensitivity_analysis_foreshock(df):
         plt.close()
     except Exception as e:
         print(f"{Y_}Grafik oluşturulamadı: {e}{X_}")
-    
     return sens_df
 
-# ================================================================================
-# CLASSIFICATION VE METRIC FUNCTIONS
-# ================================================================================
 def get_metrics(yt, yp, ypr):
     m={'accuracy':accuracy_score(yt,yp),
        'precision':precision_score(yt,yp,zero_division=0),
@@ -671,14 +572,7 @@ def prospective_sim(df_test, model, fl):
                     'correct':(pp>=0.5)==ao})
     return pd.DataFrame(res)
 
-# ================================================================================
-# HYPERPARAMETER OPTIMIZATION (SADECE MODEL PARAMETRELERİ İÇİN)
-# ================================================================================
 def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
-    """
-    Bu fonksiyon SADECE model hiperparametrelerini optimize eder.
-    Etiket tanımına DOKUNMAZ.
-    """
     if not OPTUNA_AVAILABLE: return None
     def obj(trial):
         if mt=='xgb':
@@ -699,70 +593,53 @@ def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
         return cross_val_score(mdl,Xtr,ytr,cv=TimeSeriesSplit(n_splits=3),
                                scoring='roc_auc').mean()
     try:
-        study=optuna.create_study(direction='maximize',
-                                  sampler=optuna.samplers.TPESampler())
+        study=optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler())
         study.optimize(obj,n_trials=n_trials,show_progress_bar=False)
         return study.best_params
     except: return None
 
-# ================================================================================
-# DÜZELTİLMİŞ: TRAINING (SABİT ETİKETLER KULLANIR)
-# ================================================================================
+# ====================== DÜZELTME BAŞLANGICI ======================
 def train_sklearn_improved(df_full, new_ids, force=False):
-    """
-    İyileştirilmiş train fonksiyonu: SABİT bilimsel parametrelerle etiketleme yapar.
-    Model, etiket tanımını DEĞİŞTİRMEZ.
-    """
     models={'xgb':None,'rf':None}
     metrics={'xgb':{},'rf':{}}
     expl={'xgb':None,'rf':None}
     mp={'xgb':'xgb_v5.joblib','rf':'rf_v5.joblib'}
-    
     cutoff=df_full['time'].quantile(0.8)
     trd=df_full[df_full['time']<=cutoff].copy()
     ted=df_full[df_full['time']>cutoff].copy()
-    
     if len(ted)<10:
         return {},{},{}
-    
     if not force and all(os.path.exists(p) for p in mp.values()):
         for k in models: models[k]=joblib.load(mp[k])
         return models,metrics,expl
-    
     trd=fix_numeric(trd)
     ted=fix_numeric(ted)
-    
-    # ============ DÜZELTİLDİ: Sabit bilimsel parametrelerle etiketleme ============
     print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
-    print(f"{C_}  Parametreler: Mag>={FORESHOCK_MAG_THRESHOLD}, TW={FORESHOCK_TIME_WINDOW_DAYS}d, SR={FORESHOCK_SPATIAL_RADIUS_KM}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}{X_}")
-    
     trl = create_labels_parametric(trd.copy())
     tel = create_labels_parametric(ted.copy())
-    
-    # ============ SENSITIVITY ANALİZİ (SADECE ETİKET DAĞILIMI) ============
-    print(f"{C_}Sensitivity analizi yapiliyor (modelden bağımsız)...{X_}")
     sensitivity_df = sensitivity_analysis_foreshock(trd)
     if sensitivity_df is not None:
         sensitivity_df.to_csv('foreshock_sensitivity_analysis.csv', index=False)
         print(f"{G_}✓ Sensitivity analysis kaydedildi: foreshock_sensitivity_analysis.csv{X_}")
-    
     af=[f for f in ENHANCED_FEATURES if f in trl.columns]
     Xtr=trl[af].apply(safe_fill); ytr=trl[TARGET]
     Xte=tel[af].apply(safe_fill); yte=tel[TARGET]
-    sw=None
-    
+
     for mtype in ['xgb','rf']:
-        # SADECE model hiperparametrelerini optimize et, etiketlere dokunma
         bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
         if mtype=='xgb':
+            n_neg = (ytr == 0).sum()
+            n_pos = (ytr == 1).sum()
+            scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1
             mdl=XGBClassifier(**(bp or {'n_estimators':300,'max_depth':8,
                 'learning_rate':0.1,'random_state':42,
-                'use_label_encoder':False,'eval_metric':'logloss'}))
+                'use_label_encoder':False,'eval_metric':'logloss'}),
+                scale_pos_weight=scale_pos_weight)
         else:
             mdl=RandomForestClassifier(**(bp or {'n_estimators':300,
-                'max_depth':15,'random_state':42}))
-        mdl.fit(Xtr,ytr,sample_weight=sw if mtype=='xgb' else None)
-        
+                'max_depth':15,'random_state':42}),
+                class_weight='balanced')
+        mdl.fit(Xtr,ytr)
         cal=CalibratedClassifierCV(mdl,method='sigmoid',cv=3)
         cal.fit(Xtr,ytr)
         yp=cal.predict(Xte); ypr=cal.predict_proba(Xte)[:,1]
@@ -778,9 +655,6 @@ def train_sklearn_improved(df_full, new_ids, force=False):
         print(f"{G_}{mtype.upper()} Hazir | AUC:{metrics[mtype]['auc']:.3f}{X_}")
     return models,metrics,expl
 
-# ================================================================================
-# LSTM TRAINING
-# ================================================================================
 def build_lstm(shape):
     return Sequential([
         Input(shape=shape),
@@ -791,6 +665,31 @@ def build_lstm(shape):
         Dense(32,activation='relu',kernel_regularizer=l2(0.01)),Dropout(0.3),
         Dense(1,activation='sigmoid')])
 
+def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50):
+    """LSTM için zaman serisi yapısına uygun prospektif doğruluk hesaplar."""
+    if df_test.empty:
+        return 0.0
+    df_test = df_test.sort_values('time').reset_index(drop=True)
+    X = df_test[feature_cols].apply(safe_fill).values
+    X_scaled = scaler.transform(X)
+    y_true = df_test[TARGET].values
+    correct = 0
+    total = len(df_test)
+    for i in range(total):
+        start_idx = max(0, i - seq_length + 1)
+        seq = X_scaled[start_idx:i+1]
+        if len(seq) < seq_length:
+            pad_len = seq_length - len(seq)
+            seq = np.vstack([np.zeros((pad_len, X_scaled.shape[1])), seq])
+        else:
+            seq = seq[-seq_length:]
+        seq = seq.reshape(1, seq_length, X_scaled.shape[1])
+        prob = model.predict(seq, verbose=0)[0,0]
+        pred = 1 if prob >= 0.5 else 0
+        if pred == y_true[i]:
+            correct += 1
+    return (correct / total) * 100
+
 def train_lstm(df_full, new_ids, force=False):
     mpath="lstm_v5.keras"; spath="lstm_scaler_v5.joblib"
     if not force and os.path.exists(mpath) and os.path.exists(spath):
@@ -799,7 +698,6 @@ def train_lstm(df_full, new_ids, force=False):
     trd=df_full[df_full['time']<=cutoff].copy()
     ted=df_full[df_full['time']>cutoff].copy()
     if len(ted)<10: return None,None,{}
-    # Sabit bilimsel parametrelerle etiketleme
     trl=create_labels_parametric(fix_numeric(trd).copy())
     tel=create_labels_parametric(fix_numeric(ted).copy())
     if trl.empty: return None,None,{}
@@ -816,21 +714,25 @@ def train_lstm(df_full, new_ids, force=False):
     Xtr=np.array(Xtr); ytr=np.array(ytr)
     Xte=np.array(Xte); yte=np.array(yte)
     if len(Xtr)<100 or len(Xte)==0: return None,None,{}
+    # Sınıf ağırlığı hesapla
+    classes = np.unique(ytr)
+    class_weights = compute_class_weight('balanced', classes=classes, y=ytr)
+    cw_dict = dict(zip(classes, class_weights))
     mdl=build_lstm((Xtr.shape[1],Xtr.shape[2]))
     mdl.compile(optimizer=Adam(learning_rate=0.001),
                 loss='binary_crossentropy',metrics=['accuracy'])
     es=EarlyStopping(monitor='val_loss',patience=15,restore_best_weights=True)
     lr=ReduceLROnPlateau(monitor='val_loss',factor=0.5,patience=7)
-    cw={0:1.0,1:1.0}
     mdl.fit(Xtr,ytr,epochs=100,batch_size=32,validation_data=(Xte,yte),
-            callbacks=[es,lr],class_weight=cw,verbose=1)
+            callbacks=[es,lr],class_weight=cw_dict,verbose=1)
     ypm=mdl.predict(Xte,verbose=0).flatten()
     mdl.save(mpath); joblib.dump(sc,spath)
-    return mdl,sc,get_metrics(yte,(ypm>0.5).astype(int),ypm)
+    # Metrikleri oluştur ve prospektif doğruluk ekle
+    lmet = get_metrics(yte,(ypm>0.5).astype(int),ypm)
+    lmet['prospective_accuracy'] = prospective_sim_lstm(mdl, sc, tel, af, seq_length=sl)
+    return mdl,sc,lmet
+# ====================== DÜZELTME BİTİŞİ ======================
 
-# ================================================================================
-# PREDICTION WITH UNCERTAINTY
-# ================================================================================
 def predict_unc(dfp, models, lm, ls):
     if dfp.empty: return pd.DataFrame()
     dfp=fix_numeric(dfp)
@@ -876,9 +778,6 @@ def predict_unc(dfp, models, lm, ls):
     dpr['total_uncertainty']=100-dpr['confidence_score']
     return dpr
 
-# ================================================================================
-# MAPPING FUNCTIONS
-# ================================================================================
 def add_legend(m, title, items):
     body="".join([f'<i class="fa fa-circle" style="color:{c}"></i> {l}<br>'
                   for l,c in items.items()])
@@ -897,7 +796,6 @@ def base_map(dm):
                       zoom_start=6,tiles="CartoDB positron")
 
 def add_no_cache(m):
-    """Folium haritasına tarayıcı cache'ini engelleyen meta etiketler ekler."""
     no_cache_html = (
         "<meta http-equiv='Cache-Control' "
         "content='no-cache, no-store, must-revalidate, max-age=0'>"
@@ -951,7 +849,6 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
         if p >= 50: clr='darkred' if c>70 else 'red'
         elif p >= 25: clr='darkorange' if c>70 else 'orange'
         else: clr='yellow'
-        
         ts=pd.to_datetime(r['time']).strftime('%Y-%m-%d %H:%M')
         ph=(f"<b>Yer (Location):</b> {r['place']}<br>"
             f"<b>Tarih (Date):</b> {ts}<br>"
@@ -964,7 +861,6 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
             popup=folium.Popup(ph,max_width=350),
             color=clr,fill=True,fill_color=clr,fill_opacity=0.7
         ).add_to(m)
-        
     li={"Yuksek Risk (High Risk) >= %50 / Yuksek Guven":"darkred",
         "Yuksek Risk (High Risk) >= %50 / Dusuk Guven":"red",
         "Orta Risk (Medium Risk) >= %25 / Yuksek Guven":"darkorange",
@@ -974,9 +870,6 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
     add_no_cache(m)
     m.save(fn)
 
-# ================================================================================
-# REPORT GENERATION
-# ================================================================================
 def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     recent=dfr.sort_values('time',ascending=False).head(2000)
     filt=recent[recent['mag']>=4.0].copy()
@@ -991,29 +884,23 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         'Deprem Tipi (Earthquake Type)',
         'M>=5.5 Oncu Olasiligi % (Foreshock Probability %)',
         'Guven Skoru (Confidence Score)']
-
     pc='M>=5.5 Oncu Olasiligi % (Foreshock Probability %)'
     gc='Guven Skoru (Confidence Score)'
-
     def fp(row):
         v=row[pc]
         if pd.isna(v) or v=="":
-            return ('<span style="color:gray">'
-                    'Veri Yetersiz (Insufficient Data)</span>')
+            return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
         try:
             val = float(v)
             if val >= 50.00:
                 return f'<span style="color:red;font-weight:bold">{val:.2f}</span>'
             return f"{val:.2f}"
         except:
-            return ('<span style="color:gray">'
-                    'Veri Yetersiz (Insufficient Data)</span>')
-
+            return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
     def fc(row):
         if pd.isna(row[pc]) or row[pc]=="": return "-"
         try: return f"{float(row[gc]):.2f}"
         except: return "-"
-
     def ft(v):
         clrs={"Ana Deprem":"#D32F2F","Oncu Deprem":"#F57C00",
               "Artci Deprem":"#1976D2","Tekil Deprem":"#616161"}
@@ -1023,12 +910,9 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "Tekil Deprem":"Tekil Deprem (Isolated)"}
         cl=clrs.get(v,"#333"); lb=labels.get(v,v)
         return f'<span style="color:{cl};font-weight:bold">{lb}</span>'
-
     rt[pc]=rt.apply(fp,axis=1)
     rt[gc]=rt.apply(fc,axis=1)
-    rt['Deprem Tipi (Earthquake Type)']=rt[
-        'Deprem Tipi (Earthquake Type)'].apply(ft)
-
+    rt['Deprem Tipi (Earthquake Type)']=rt['Deprem Tipi (Earthquake Type)'].apply(ft)
     perf=""
     if minfo:
         rows=""
@@ -1042,29 +926,18 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                     f"<td>{mt.get('brier_score',0):.3f}</td></tr>")
         if rows:
             perf=(
-                "<h3>Model Performans Metrikleri "
-                "(Model Performance Metrics)</h3>"
+                "<h3>Model Performans Metrikleri (Model Performance Metrics)</h3>"
                 "<table style='width:100%;border-collapse:collapse'>"
-                "<tr>"
-                "<th>Model</th>"
-                "<th>AUC</th>"
-                "<th>Molchan Beceri Skoru (Skill Score)</th>"
-                "<th>Prospektif Dogruluk (Prospective Accuracy)</th>"
-                "<th>Brier Skoru (Brier Score)</th>"
-                "</tr>"
+                "<tr><th>Model</th><th>AUC</th><th>Molchan Beceri Skoru (Skill Score)</th>"
+                "<th>Prospektif Dogruluk (Prospective Accuracy)</th><th>Brier Skoru (Brier Score)</th></tr>"
                 +rows+
                 "</table>"
                 "<p style='font-size:.9em;color:#666;margin-top:10px'>"
-                "<b>Molchan Beceri Skoru (Molchan Skill Score):</b> "
-                "1.0 = Mukemmel (Perfect), "
-                "0.0 = Rastgele (Random), "
-                "&lt;0 = Rastgeleden kotu (Worse than random)<br>"
-                "<b>Prospektif Dogruluk (Prospective Accuracy):</b> "
-                "Gercek zamanli tahmin simulasyonu basari orani "
+                "<b>Molchan Beceri Skoru (Molchan Skill Score):</b> 1.0 = Mukemmel (Perfect), "
+                "0.0 = Rastgele (Random), &lt;0 = Rastgeleden kotu (Worse than random)<br>"
+                "<b>Prospektif Dogruluk (Prospective Accuracy):</b> Gercek zamanli tahmin simulasyonu basari orani "
                 "(Real-time prediction simulation success rate)</p>")
-
     tbl=rt.to_html(index=False,escape=False)
-
     html=(
         "<!DOCTYPE html><html lang='tr'><head>"
         "<meta charset='UTF-8'>"
@@ -1073,50 +946,33 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "<meta http-equiv='Expires' content='0'>"
         "<title>Sismik Risk Raporu (Seismic Risk Report)</title>"
         "<style>"
-        "body{font-family:'Segoe UI',sans-serif;padding:20px;"
-        "background:#f5f5f5}"
+        "body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}"
         "h1{color:#2c3e50}"
         "h3{color:#34495e;margin-top:30px}"
-        "table{width:100%;border-collapse:collapse;background:white;"
-        "box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}"
+        "table{width:100%;border-collapse:collapse;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}"
         "th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}"
         "th{background:#004d40;color:white}"
         "tr:hover{background:#f1f1f1}"
-        ".info{background:#e8f5e9;padding:15px;border-radius:5px;"
-        "border-left:5px solid #2e7d32;margin:20px 0}"
+        ".info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
-
         "<h1>Sismik Risk Analiz Raporu<br>"
-        "<span style='font-size:0.7em;color:#555'>"
-        "Seismic Risk Analysis Report (Improved v17 - Sabit Bilimsel Etiketler)</span></h1>"
-
-        f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | "
-        f"<b>Kullanici (User):</b> {user}</p>"
-
+        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v17 - Sabit Bilimsel Etiketler)</span></h1>"
+        f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | <b>Kullanici (User):</b> {user}</p>"
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
         f"<b>Deprem Oncu Tanimi (Foreshock Definition):</b> "
-        f"Sabit bilimsel parametreler (Mag>={FORESHOCK_MAG_THRESHOLD}, "
-        f"Time<={FORESHOCK_TIME_WINDOW_DAYS}gün, Dist<={FORESHOCK_SPATIAL_RADIUS_KM}km, "
-        f"ΔM>={FORESHOCK_MIN_MAG_DIFF}). "
+        f"Sabit bilimsel parametreler (Mag>={FORESHOCK_MAG_THRESHOLD}, Time<={FORESHOCK_TIME_WINDOW_DAYS}gün, "
+        f"Dist<={FORESHOCK_SPATIAL_RADIUS_KM}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}). "
         f"Bu parametreler model eğitiminden bağımsızdır ve değiştirilmez."
         f"</div>"
-
         f"{perf}"
-
         "<h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3>"
         f"{tbl}"
-
         "</body></html>")
-
     with open("deprem_analiz_raporu_sade.html","w",encoding='utf-8') as f:
         f.write(html)
     print(f"{G_}✓ Rapor olusturuldu: deprem_analiz_raporu_sade.html{X_}")
 
-
-# ================================================================================
-# MAIN FUNCTION
-# ================================================================================
 def main():
     t0=time.time()
     db="earthquakes_3_5_plus_scientific_v5.db"
@@ -1127,11 +983,9 @@ def main():
         print(f"{C_}{'='*70}")
         print("Sismik Analiz v17 (Seismic Analysis v17 - SABİT BİLİMSEL ETİKETLER)")
         print(f"{'='*70}{X_}")
-
         db_exists = os.path.exists(db)
         conn=sqlite3.connect(db)
         new_db=setup_database(conn,tn)
-
         if not db_exists or new_db:
             print(f"{C_}Veritabani yeni olusturuldu. Gecmis datalar CSV'den aktariliyor...{X_}")
             load_historical_csv(conn, tn, csv_file)
@@ -1145,18 +999,14 @@ def main():
                     dfc.to_sql(tn,conn,if_exists='append',index=False)
                     conn.commit()
                 except: pass
-
         force=False
         new_ids=fetch_and_load_api_data(conn,tn)
         if new_ids: force=True
-
         df=pd.read_sql_query(f"SELECT * FROM {tn}",conn)
         df.drop_duplicates(subset=['eventID'],inplace=True,keep='last')
         df['time']=pd.to_datetime(df['time'],utc=True)
-
         if len(df)<100:
-            fetch_and_load_api_data(conn,tn,
-                                    start_override='2023-01-01 00:00:00')
+            fetch_and_load_api_data(conn,tn,start_override='2023-01-01 00:00:00')
             df=pd.read_sql_query(f"SELECT * FROM {tn}",conn)
             df.drop_duplicates(subset=['eventID'],inplace=True,keep='last')
             df['time']=pd.to_datetime(df['time'],utc=True)
@@ -1164,54 +1014,38 @@ def main():
             if len(df)<100:
                 print(f"{R_}Yetersiz veri (Insufficient data).{X_}")
                 return
-
-        # Bölgesel bilgi ekle
         print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
-        df['seismic_zone'] = df.apply(
-            lambda row: detect_seismic_zone(row['latitude'], row['longitude']),
-            axis=1
-        )
+        df['seismic_zone'] = df.apply(lambda row: detect_seismic_zone(row['latitude'], row['longitude']), axis=1)
         zone_counts = df['seismic_zone'].value_counts()
         print(f"{G_}Bolge Dagilimi:{X_}")
         for zone, count in zone_counts.items():
             print(f"  {zone}: {count} olay")
-
         df=calc_features(df)
         df=classify_eq_type(df)
-
-        # Sabit bilimsel etiketlerle eğitim
         models,metrics,expl=train_sklearn_improved(df,new_ids,force=force)
         lm,ls,lmet=train_lstm(df,new_ids,force=force)
-
         ami={**metrics}
         if lmet: ami['lstm']=lmet
-
         dfr=df.copy()
         t7=pd.to_datetime(datetime.utcnow(),utc=True)-timedelta(days=7)
-        
         rm=(dfr['time']>=t7)|(dfr['olasilik'].isnull())
         aids=set(new_ids)|set(dfr[rm]['eventID'])
-
         if aids:
             dtp=dfr[dfr['eventID'].isin(aids)].copy()
             preds=predict_unc(dtp,models,lm,ls)
             if not preds.empty:
                 preds['eventID']=dtp['eventID'].values
-                dfr=pd.merge(dfr,preds,on='eventID',
-                             how='left',suffixes=('','_new'))
+                dfr=pd.merge(dfr,preds,on='eventID',how='left',suffixes=('','_new'))
                 for col in ['olasilik','confidence_score','total_uncertainty']:
                     nc=f'{col}_new'
                     if nc in dfr.columns:
                         dfr[col]=dfr[nc].fillna(dfr[col])
                         dfr.drop(columns=[nc],inplace=True)
-
         dfs=dfr.copy()
         dfs['time']=dfs['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
         cur=conn.cursor()
-        db_cols=[i[1] for i in cur.execute(
-            f"PRAGMA table_info({tn})").fetchall()]
+        db_cols=[i[1] for i in cur.execute(f"PRAGMA table_info({tn})").fetchall()]
         dfs[db_cols].to_sql(tn,conn,if_exists='replace',index=False)
-
         map_by_type(dfr)
         map_by_prob(dfr)
         gen_report(
@@ -1220,13 +1054,11 @@ def main():
             f"Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. "
             f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition.)",
             new_ids, ami, expl)
-
         elapsed=time.time()-t0
         print(f"\n{G_}{'='*70}")
         print(f"✓ TAMAMLANDI (COMPLETED)")
         print(f"Sure (Duration): {elapsed:.1f} saniye (seconds)")
         print(f"{'='*70}{X_}")
-        
         print(f"\n{G_}Üretilen Dosyalar (Generated Files):{X_}")
         print(f"  ✓ foreshock_sensitivity_analysis.csv (etiket dağılım analizi)")
         print(f"  ✓ sensitivity_analysis.png (parametre duyarlılık grafiği)")
@@ -1235,7 +1067,6 @@ def main():
         print(f"  ✓ deprem_haritasi_olasilik.html")
         print(f"  ✓ molchan_xgb.png")
         print(f"  ✓ molchan_rf.png")
-
     except Exception as e:
         print(f"{R_}HATA (ERROR): {e}{X_}")
         print(traceback.format_exc())
