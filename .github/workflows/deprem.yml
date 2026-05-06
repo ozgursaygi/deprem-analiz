@@ -2,8 +2,13 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *' # Her 12 saatte bir (00:00 ve 12:00 UTC) çalışır
-  workflow_dispatch: # Manuel olarak "Run workflow" butonuna basmana izin verir
+    - cron: '0 */12 * * *' 
+  workflow_dispatch: 
+
+# --- KRİTİK EKLENTİ BURASI ---
+permissions:
+  contents: write
+# ----------------------------
 
 jobs:
   build:
@@ -13,7 +18,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Tüm geçmişi çekmek rebase hatalarını azaltır
+          fetch-depth: 0 
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -35,23 +40,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 1. Değişen dosyaları ekle
           git add -A docs/
           git add earthquakes_3_5_plus_scientific_v5.db
           git add deprem_analiz_raporu_sade.html deprem_haritasi_tip.html deprem_haritasi_olasilik.html 2>/dev/null || true
           git add molchan_xgb.png molchan_rf.png 2>/dev/null || true
           git add foreshock_sensitivity_analysis.csv sensitivity_analysis.png 2>/dev/null || true
           
-          # 2. Değişiklik kontrolü ve Commit
           if git diff --staged --quiet; then
-            echo "Değişiklik yok, işlem atlanıyor."
+            echo "Değişiklik yok, commit atlanıyor."
           else
             git commit -m "Otomatik veri ve analiz güncellemesi [skip ci]"
             
-            # 3. Güvenli Push Döngüsü (Hata aldığın kısım düzeltildi)
             for i in 1 2 3; do
-              echo "Push denemesi $i..."
-              # Önce commit yapıldığı için rebase artık hata vermez
+              echo "Deneme $i..."
               git pull --rebase origin main
               
               if git push origin main; then
@@ -62,7 +63,5 @@ jobs:
               echo "Push başarısız, 10 saniye bekleniyor..."
               sleep 10
             done
-            
-            echo "3 deneme sonunda push yapılamadı."
             exit 1
           fi
