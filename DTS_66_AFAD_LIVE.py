@@ -18,7 +18,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-                             f1_score, roc_auc_score, brier_score_loss, roc_curve)
+                             f1_score, roc_auc_score, brier_score_loss, roc_curve,
+                             precision_recall_curve)
 from sklearn.utils.class_weight import compute_class_weight
 from xgboost import XGBClassifier
 from tensorflow.keras.models import Sequential, load_model
@@ -529,48 +530,273 @@ def sensitivity_analysis_foreshock(df):
         print(f"{Y_}Grafik oluşturulamadı: {e}{X_}")
     return sens_df
 
+# ====================== DÜZELTİLMİŞ METRİK FONKSİYONLARI ======================
 def get_metrics(yt, yp, ypr):
-    m={'accuracy':accuracy_score(yt,yp),
-       'precision':precision_score(yt,yp,zero_division=0),
-       'recall':recall_score(yt,yp,zero_division=0),
-       'f1_score':f1_score(yt,yp,zero_division=0),
-       'auc':roc_auc_score(yt,ypr) if len(np.unique(yt))>1 else 0.5,
-       'brier_score':brier_score_loss(yt,ypr),'ece':0}
-    if len(yt)>0 and len(np.unique(yt))>1:
-        pt,pp=calibration_curve(yt,ypr,n_bins=10,strategy='uniform')
-        m['ece']=np.mean(np.abs(pt-pp))
+    """Geçerli metrikleri hesaplar, yetersiz pozitif/negatif durumunda NaN döner."""
+    if len(np.unique(yt)) < 2:
+        # Test setinde sadece tek sınıf var -> anlamlı metrik üretilemez
+        return {
+            'accuracy': np.nan,
+            'precision': np.nan,
+            'recall': np.nan,
+            'f1_score': np.nan,
+            'auc': np.nan,
+            'brier_score': np.nan,
+            'ece': np.nan
+        }
+    m = {
+        'accuracy': accuracy_score(yt, yp),
+        'precision': precision_score(yt, yp, zero_division=0),
+        'recall': recall_score(yt, yp, zero_division=0),
+        'f1_score': f1_score(yt, yp, zero_division=0),
+        'auc': roc_auc_score(yt, ypr),
+        'brier_score': brier_score_loss(yt, ypr),
+        'ece': 0
+    }
+    # ECE (Expected Calibration Error)
+    prob_true, prob_pred = calibration_curve(yt, ypr, n_bins=10, strategy='uniform')
+    m['ece'] = np.mean(np.abs(prob_true - prob_pred))
     return m
 
 def calc_molchan(yt, ypr):
-    if len(np.unique(yt))<2:
-        return {'skill_score':0,'molchan_auc':0.5,
-                'miss_rate':np.array([0,1]),'alarm_rate':np.array([0,1]),
-                'thresholds':np.array([0])}
-    fpr,tpr,th=roc_curve(yt,ypr)
-    mr=1-tpr; ar=fpr; ma=np.trapz(mr,ar); ss=1-(2*ma)
-    return {'skill_score':ss,'molchan_auc':ma,'miss_rate':mr,
-            'alarm_rate':ar,'thresholds':th}
+    """Molchan diagram ve skill score, sadece iki sınıf varsa hesaplanır."""
+    if len(np.unique(yt)) < 2:
+        return {'skill_score': np.nan, 'molchan_auc': np.nan,
+                'miss_rate': np.array([0,1]), 'alarm_rate': np.array([0,1]),
+                'thresholds': np.array([0])}
+    fpr, tpr, th = roc_curve(yt, ypr)
+    mr = 1 - tpr
+    ar = fpr
+    ma = np.trapz(mr, ar)   # Molchan AUC (altındaki alan)
+    ss = 1 - (2 * ma)       # Skill score: 1 mükemmel, 0 rastgele, negatif kötü
+    return {'skill_score': ss, 'molchan_auc': ma,
+            'miss_rate': mr, 'alarm_rate': ar, 'thresholds': th}
+
+def prospective_sim(df_test, model, feature_cols, threshold=None):
+    """
+    Prospektif simülasyon.
+    Eğer threshold=None ise, eğitim setinde (model içinde) en iyi F1 eşiği bulunur.
+    Burada model.calibrated_classifiers_ içinden erişilen base estimator'ın
+    eğitim verisi olmadığı için pratikte threshold'u eğitim setinden hesaplamalıyız.
+    Basit çözüm: model.predict_proba kullan, threshold=0.5 kullan ama uyarı ver.
+    Daha iyisi: dışarıdan bir validation seti ile belirlenmiş threshold almak.
+    Kolaylık için burada eğitim setinden optimum eşiği bulmak için bir yardımcı fonksiyon ekliyoruz.
+    """
+    if threshold is None:
+        # Varsayılan 0.5 kullan, ancak uyarı bas
+        print(f"{Y_}Uyarı: Prospektif simülasyonda optimum eşik kullanılmadı, sabit 0.5 kullanılıyor.{X_}")
+        threshold = 0.5
+    y_pred_proba = model.predict_proba(df_test[feature_cols].values)[:, 1]
+    y_pred = (y_pred_proba >= threshold).astype(int)
+    correct = (y_pred == df_test[TARGET].values)
+    acc = correct.mean() * 100
+    # Ayrıca precision/recall da döndürebiliriz
+    p = precision_score(df_test[TARGET], y_pred, zero_division=0)
+    r = recall_score(df_test[TARGET], y_pred, zero_division=0)
+    return {'accuracy': acc, 'precision': p, 'recall': r, 'predictions': y_pred}
+
+# ====================== DÜZELTİLMİŞ EĞİTİM FONKSİYONLARI ======================
+def train_sklearn_improved(df_full, new_ids, force=False):
+    models = {'xgb': None, 'rf': None}
+    metrics = {'xgb': {}, 'rf': {}}
+    expl = {'xgb': None, 'rf': None}
+    mp = {'xgb': 'xgb_v5.joblib', 'rf': 'rf_v5.joblib'}
+    cutoff = df_full['time'].quantile(0.8)
+    trd = df_full[df_full['time'] <= cutoff].copy()
+    ted = df_full[df_full['time'] > cutoff].copy()
+    if len(ted) < 10:
+        print(f"{Y_}Test seti çok küçük, model eğitimi atlanıyor.{X_}")
+        return {}, {}, {}
+    if not force and all(os.path.exists(p) for p in mp.values()):
+        for k in models:
+            models[k] = joblib.load(mp[k])
+        return models, metrics, expl
+
+    trd = fix_numeric(trd)
+    ted = fix_numeric(ted)
+    print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
+    trl = create_labels_parametric(trd.copy())
+    tel = create_labels_parametric(ted.copy())
+
+    # Sensitivite analizi sadece training set üzerinde yapılır
+    sensitivity_df = sensitivity_analysis_foreshock(trd)
+    if sensitivity_df is not None:
+        sensitivity_df.to_csv('foreshock_sensitivity_analysis.csv', index=False)
+        print(f"{G_}✓ Sensitivity analysis kaydedildi: foreshock_sensitivity_analysis.csv{X_}")
+
+    af = [f for f in ENHANCED_FEATURES if f in trl.columns]
+    Xtr = trl[af].apply(safe_fill)
+    ytr = trl[TARGET]
+    Xte = tel[af].apply(safe_fill)
+    yte = tel[TARGET]
+
+    # Eğitim setinde pozitif örnek yoksa model eğitilemez
+    if ytr.sum() == 0:
+        print(f"{R_}Eğitim setinde hiç foreshock örneği yok! Model eğitilemez.{X_}")
+        return {}, {}, {}
+    if yte.sum() == 0:
+        print(f"{Y_}Uyarı: Test setinde hiç foreshock yok. Metrikler geçersiz olacak.{X_}")
+
+    for mtype in ['xgb', 'rf']:
+        bp = optuna_opt(Xtr, ytr, mtype, n_trials=30)
+        if mtype == 'xgb':
+            n_neg = (ytr == 0).sum()
+            n_pos = (ytr == 1).sum()
+            scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1
+            mdl = XGBClassifier(**(bp or {'n_estimators':300, 'max_depth':8,
+                'learning_rate':0.1, 'random_state':42,
+                'use_label_encoder':False, 'eval_metric':'logloss'}),
+                scale_pos_weight=scale_pos_weight)
+        else:
+            mdl = RandomForestClassifier(**(bp or {'n_estimators':300,
+                'max_depth':15, 'random_state':42}),
+                class_weight='balanced')
+        mdl.fit(Xtr, ytr)
+        cal = CalibratedClassifierCV(mdl, method='sigmoid', cv=3)
+        cal.fit(Xtr, ytr)
+        yp = cal.predict(Xte)
+        ypr = cal.predict_proba(Xte)[:, 1]
+
+        # Metrikleri hesapla (NaN olabilir)
+        met = get_metrics(yte, yp, ypr)
+        mcd = calc_molchan(yte, ypr)
+        met['molchan_skill'] = mcd['skill_score']
+        met['molchan_auc'] = mcd['molchan_auc']
+
+        # Prospektif simülasyon: optimum eşik için eğitim setinde PR eğrisi kullan
+        # Basitçe eğitim setinde en iyi F1 eşiğini bulalım:
+        tr_proba = cal.predict_proba(Xtr)[:, 1]
+        prec, rec, ths = precision_recall_curve(ytr, tr_proba)
+        f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
+        best_th = ths[np.argmax(f1_scores[:-1])] if len(ths) > 0 else 0.5
+        ps = prospective_sim(tel, cal, af, threshold=best_th)
+        met['prospective_accuracy'] = ps['accuracy']
+        met['prospective_precision'] = ps['precision']
+        met['prospective_recall'] = ps['recall']
+
+        models[mtype] = cal
+        metrics[mtype] = met
+        plot_molchan(mcd, fn=f'molchan_{mtype}.png')
+        joblib.dump(cal, mp[mtype])
+        print(f"{G_}{mtype.upper()} Hazir | AUC:{met['auc']:.3f} (Skill:{met['molchan_skill']:.3f}){X_}")
+    return models, metrics, expl
+
+def build_lstm(shape):
+    return Sequential([
+        Input(shape=shape),
+        LSTM(128, return_sequences=True, dropout=0.3), BatchNormalization(),
+        LSTM(64, return_sequences=True, dropout=0.3), BatchNormalization(),
+        LSTM(32, dropout=0.3), BatchNormalization(),
+        Dense(64, activation='relu', kernel_regularizer=l2(0.01)), Dropout(0.5),
+        Dense(32, activation='relu', kernel_regularizer=l2(0.01)), Dropout(0.3),
+        Dense(1, activation='sigmoid')
+    ])
+
+def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, threshold=0.5):
+    """
+    LSTM için prospektif doğruluk hesaplar.
+    Eğitim setindeki gibi ilk seq_length-1 örneği atar.
+    """
+    if df_test.empty or len(df_test) <= seq_length:
+        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0}
+    df_test = df_test.sort_values('time').reset_index(drop=True)
+    X = df_test[feature_cols].apply(safe_fill).values
+    X_scaled = scaler.transform(X)
+    y_true = df_test[TARGET].values
+    correct = 0
+    total = len(df_test) - seq_length + 1  # sadece seq_length kadar geçmişi olan örnekler
+    all_preds = []
+    all_true = []
+    for i in range(seq_length - 1, len(df_test)):
+        seq = X_scaled[i - seq_length + 1 : i + 1]  # son seq_length adım
+        seq = seq.reshape(1, seq_length, X_scaled.shape[1])
+        prob = model.predict(seq, verbose=0)[0, 0]
+        pred = 1 if prob >= threshold else 0
+        all_preds.append(pred)
+        all_true.append(y_true[i])
+        if pred == y_true[i]:
+            correct += 1
+    acc = (correct / total) * 100 if total > 0 else 0.0
+    p = precision_score(all_true, all_preds, zero_division=0)
+    r = recall_score(all_true, all_preds, zero_division=0)
+    return {'accuracy': acc, 'precision': p, 'recall': r}
+
+def train_lstm(df_full, new_ids, force=False):
+    mpath = "lstm_v5.keras"
+    spath = "lstm_scaler_v5.joblib"
+    if not force and os.path.exists(mpath) and os.path.exists(spath):
+        return load_model(mpath), joblib.load(spath), {}
+    cutoff = df_full['time'].quantile(0.8)
+    trd = df_full[df_full['time'] <= cutoff].copy()
+    ted = df_full[df_full['time'] > cutoff].copy()
+    if len(ted) < 10:
+        return None, None, {}
+    trl = create_labels_parametric(fix_numeric(trd).copy())
+    tel = create_labels_parametric(fix_numeric(ted).copy())
+    if trl.empty:
+        return None, None, {}
+    af = [f for f in ENHANCED_FEATURES if f in trl.columns]
+    sc = StandardScaler()
+    trs = sc.fit_transform(trl[af].apply(safe_fill))
+    tes = sc.transform(tel[af].apply(safe_fill))
+    sl = 50
+    Xtr, ytr = [], []
+    for i in range(len(trs) - sl):
+        Xtr.append(trs[i:i+sl])
+        ytr.append(trl[TARGET].iloc[i+sl])
+    Xte, yte = [], []
+    for i in range(len(tes) - sl):
+        Xte.append(tes[i:i+sl])
+        yte.append(tel[TARGET].iloc[i+sl])
+    Xtr = np.array(Xtr)
+    ytr = np.array(ytr)
+    Xte = np.array(Xte)
+    yte = np.array(yte)
+    if len(Xtr) < 100 or len(Xte) == 0:
+        return None, None, {}
+    if ytr.sum() == 0:
+        print(f"{R_}Eğitim setinde LSTM için hiç foreshock yok. Eğitim atlanıyor.{X_}")
+        return None, None, {}
+    classes = np.unique(ytr)
+    class_weights = compute_class_weight('balanced', classes=classes, y=ytr)
+    cw_dict = dict(zip(classes, class_weights))
+    mdl = build_lstm((Xtr.shape[1], Xtr.shape[2]))
+    mdl.compile(optimizer=Adam(learning_rate=0.001),
+                loss='binary_crossentropy', metrics=['accuracy'])
+    es = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
+    lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=7)
+    mdl.fit(Xtr, ytr, epochs=100, batch_size=32, validation_data=(Xte, yte),
+            callbacks=[es, lr], class_weight=cw_dict, verbose=1)
+    ypm = mdl.predict(Xte, verbose=0).flatten()
+    yp = (ypm >= 0.5).astype(int)
+    lmet = get_metrics(yte, yp, ypm)
+
+    # Prospektif simülasyon için eğitim setinde optimum eşik bul
+    if len(ytr) > 0:
+        tr_proba = mdl.predict(Xtr, verbose=0).flatten()
+        prec, rec, ths = precision_recall_curve(ytr, tr_proba)
+        f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
+        best_th = ths[np.argmax(f1_scores[:-1])] if len(ths) > 0 else 0.5
+        ps = prospective_sim_lstm(mdl, sc, tel, af, seq_length=sl, threshold=best_th)
+        lmet['prospective_accuracy'] = ps['accuracy']
+        lmet['prospective_precision'] = ps['precision']
+        lmet['prospective_recall'] = ps['recall']
+    else:
+        lmet['prospective_accuracy'] = np.nan
+    mdl.save(mpath)
+    joblib.dump(sc, spath)
+    return mdl, sc, lmet
 
 def plot_molchan(md, fn='molchan.png'):
     try:
         plt.figure(figsize=(8,6))
-        plt.plot(md['alarm_rate'],md['miss_rate'],'b-',lw=2,
+        plt.plot(md['alarm_rate'], md['miss_rate'], 'b-', lw=2,
                  label=f"Model (Skill={md['skill_score']:.3f})")
-        plt.plot([0,1],[0,1],'r--',lw=1,label='Rastgele (Random)')
+        plt.plot([0,1], [0,1], 'r--', lw=1, label='Rastgele (Random)')
         plt.xlabel('Alarm Rate'); plt.ylabel('Miss Rate')
         plt.title('Molchan Diagram'); plt.legend(); plt.grid(alpha=0.3)
-        plt.tight_layout(); plt.savefig(fn,dpi=150); plt.close()
+        plt.tight_layout(); plt.savefig(fn, dpi=150); plt.close()
     except: pass
-
-def prospective_sim(df_test, model, fl):
-    res=[]
-    for i in range(len(df_test)):
-        ev=df_test.iloc[i]; X=ev[fl].values.reshape(1,-1)
-        pp=model.predict_proba(X)[0,1]; ao=ev[TARGET]
-        res.append({'eventID':ev['eventID'],'time':ev['time'],'mag':ev['mag'],
-                    'predicted_proba':pp,'actual_outcome':ao,
-                    'correct':(pp>=0.5)==ao})
-    return pd.DataFrame(res)
 
 def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
     if not OPTUNA_AVAILABLE: return None
@@ -597,141 +823,6 @@ def optuna_opt(Xtr, ytr, mt='xgb', n_trials=30):
         study.optimize(obj,n_trials=n_trials,show_progress_bar=False)
         return study.best_params
     except: return None
-
-# ====================== DÜZELTME BAŞLANGICI ======================
-def train_sklearn_improved(df_full, new_ids, force=False):
-    models={'xgb':None,'rf':None}
-    metrics={'xgb':{},'rf':{}}
-    expl={'xgb':None,'rf':None}
-    mp={'xgb':'xgb_v5.joblib','rf':'rf_v5.joblib'}
-    cutoff=df_full['time'].quantile(0.8)
-    trd=df_full[df_full['time']<=cutoff].copy()
-    ted=df_full[df_full['time']>cutoff].copy()
-    if len(ted)<10:
-        return {},{},{}
-    if not force and all(os.path.exists(p) for p in mp.values()):
-        for k in models: models[k]=joblib.load(mp[k])
-        return models,metrics,expl
-    trd=fix_numeric(trd)
-    ted=fix_numeric(ted)
-    print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
-    trl = create_labels_parametric(trd.copy())
-    tel = create_labels_parametric(ted.copy())
-    sensitivity_df = sensitivity_analysis_foreshock(trd)
-    if sensitivity_df is not None:
-        sensitivity_df.to_csv('foreshock_sensitivity_analysis.csv', index=False)
-        print(f"{G_}✓ Sensitivity analysis kaydedildi: foreshock_sensitivity_analysis.csv{X_}")
-    af=[f for f in ENHANCED_FEATURES if f in trl.columns]
-    Xtr=trl[af].apply(safe_fill); ytr=trl[TARGET]
-    Xte=tel[af].apply(safe_fill); yte=tel[TARGET]
-
-    for mtype in ['xgb','rf']:
-        bp=optuna_opt(Xtr,ytr,mtype,n_trials=30)
-        if mtype=='xgb':
-            n_neg = (ytr == 0).sum()
-            n_pos = (ytr == 1).sum()
-            scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1
-            mdl=XGBClassifier(**(bp or {'n_estimators':300,'max_depth':8,
-                'learning_rate':0.1,'random_state':42,
-                'use_label_encoder':False,'eval_metric':'logloss'}),
-                scale_pos_weight=scale_pos_weight)
-        else:
-            mdl=RandomForestClassifier(**(bp or {'n_estimators':300,
-                'max_depth':15,'random_state':42}),
-                class_weight='balanced')
-        mdl.fit(Xtr,ytr)
-        cal=CalibratedClassifierCV(mdl,method='sigmoid',cv=3)
-        cal.fit(Xtr,ytr)
-        yp=cal.predict(Xte); ypr=cal.predict_proba(Xte)[:,1]
-        models[mtype]=cal; metrics[mtype]=get_metrics(yte,yp,ypr)
-        mcd=calc_molchan(yte,ypr)
-        metrics[mtype]['molchan_skill']=mcd['skill_score']
-        metrics[mtype]['molchan_auc']=mcd['molchan_auc']
-        plot_molchan(mcd,fn=f'molchan_{mtype}.png')
-        psr=prospective_sim(tel,cal,af)
-        metrics[mtype]['prospective_accuracy']=(
-            psr['correct'].mean()*100 if not psr.empty else 0)
-        joblib.dump(cal,mp[mtype])
-        print(f"{G_}{mtype.upper()} Hazir | AUC:{metrics[mtype]['auc']:.3f}{X_}")
-    return models,metrics,expl
-
-def build_lstm(shape):
-    return Sequential([
-        Input(shape=shape),
-        LSTM(128,return_sequences=True,dropout=0.3),BatchNormalization(),
-        LSTM(64,return_sequences=True,dropout=0.3),BatchNormalization(),
-        LSTM(32,dropout=0.3),BatchNormalization(),
-        Dense(64,activation='relu',kernel_regularizer=l2(0.01)),Dropout(0.5),
-        Dense(32,activation='relu',kernel_regularizer=l2(0.01)),Dropout(0.3),
-        Dense(1,activation='sigmoid')])
-
-def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50):
-    """LSTM için zaman serisi yapısına uygun prospektif doğruluk hesaplar."""
-    if df_test.empty:
-        return 0.0
-    df_test = df_test.sort_values('time').reset_index(drop=True)
-    X = df_test[feature_cols].apply(safe_fill).values
-    X_scaled = scaler.transform(X)
-    y_true = df_test[TARGET].values
-    correct = 0
-    total = len(df_test)
-    for i in range(total):
-        start_idx = max(0, i - seq_length + 1)
-        seq = X_scaled[start_idx:i+1]
-        if len(seq) < seq_length:
-            pad_len = seq_length - len(seq)
-            seq = np.vstack([np.zeros((pad_len, X_scaled.shape[1])), seq])
-        else:
-            seq = seq[-seq_length:]
-        seq = seq.reshape(1, seq_length, X_scaled.shape[1])
-        prob = model.predict(seq, verbose=0)[0,0]
-        pred = 1 if prob >= 0.5 else 0
-        if pred == y_true[i]:
-            correct += 1
-    return (correct / total) * 100
-
-def train_lstm(df_full, new_ids, force=False):
-    mpath="lstm_v5.keras"; spath="lstm_scaler_v5.joblib"
-    if not force and os.path.exists(mpath) and os.path.exists(spath):
-        return load_model(mpath),joblib.load(spath),{}
-    cutoff=df_full['time'].quantile(0.8)
-    trd=df_full[df_full['time']<=cutoff].copy()
-    ted=df_full[df_full['time']>cutoff].copy()
-    if len(ted)<10: return None,None,{}
-    trl=create_labels_parametric(fix_numeric(trd).copy())
-    tel=create_labels_parametric(fix_numeric(ted).copy())
-    if trl.empty: return None,None,{}
-    af=[f for f in ENHANCED_FEATURES if f in trl.columns]
-    sc=StandardScaler()
-    trs=sc.fit_transform(trl[af].apply(safe_fill))
-    tes=sc.transform(tel[af].apply(safe_fill))
-    sl=50; Xtr,ytr=[],[]
-    for i in range(len(trs)-sl):
-        Xtr.append(trs[i:i+sl]); ytr.append(trl[TARGET].iloc[i+sl])
-    Xte,yte=[],[]
-    for i in range(len(tes)-sl):
-        Xte.append(tes[i:i+sl]); yte.append(tel[TARGET].iloc[i+sl])
-    Xtr=np.array(Xtr); ytr=np.array(ytr)
-    Xte=np.array(Xte); yte=np.array(yte)
-    if len(Xtr)<100 or len(Xte)==0: return None,None,{}
-    # Sınıf ağırlığı hesapla
-    classes = np.unique(ytr)
-    class_weights = compute_class_weight('balanced', classes=classes, y=ytr)
-    cw_dict = dict(zip(classes, class_weights))
-    mdl=build_lstm((Xtr.shape[1],Xtr.shape[2]))
-    mdl.compile(optimizer=Adam(learning_rate=0.001),
-                loss='binary_crossentropy',metrics=['accuracy'])
-    es=EarlyStopping(monitor='val_loss',patience=15,restore_best_weights=True)
-    lr=ReduceLROnPlateau(monitor='val_loss',factor=0.5,patience=7)
-    mdl.fit(Xtr,ytr,epochs=100,batch_size=32,validation_data=(Xte,yte),
-            callbacks=[es,lr],class_weight=cw_dict,verbose=1)
-    ypm=mdl.predict(Xte,verbose=0).flatten()
-    mdl.save(mpath); joblib.dump(sc,spath)
-    # Metrikleri oluştur ve prospektif doğruluk ekle
-    lmet = get_metrics(yte,(ypm>0.5).astype(int),ypm)
-    lmet['prospective_accuracy'] = prospective_sim_lstm(mdl, sc, tel, af, seq_length=sl)
-    return mdl,sc,lmet
-# ====================== DÜZELTME BİTİŞİ ======================
 
 def predict_unc(dfp, models, lm, ls):
     if dfp.empty: return pd.DataFrame()
@@ -884,8 +975,8 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         'Deprem Tipi (Earthquake Type)',
         'M>=5.5 Oncu Olasiligi % (Foreshock Probability %)',
         'Guven Skoru (Confidence Score)']
-    pc='M>=5.5 Oncu Olasiligi % (Foreshock Probability %)'
-    gc='Guven Skoru (Confidence Score)'
+    pc = 'M>=5.5 Oncu Olasiligi % (Foreshock Probability %)'
+    gc = 'Guven Skoru (Confidence Score)'
     def fp(row):
         v=row[pc]
         if pd.isna(v) or v=="":
@@ -916,29 +1007,37 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     perf=""
     if minfo:
         rows=""
-        for mn,mt in minfo.items():
-            if mt:
+        for mn, mt in minfo.items():
+            if mt and isinstance(mt, dict):
+                # NaN olan değerleri "N/A" olarak göster
+                auc_val = mt.get('auc', np.nan)
+                auc_str = f"{auc_val:.3f}" if not np.isnan(auc_val) else "N/A"
+                skill_val = mt.get('molchan_skill', np.nan)
+                skill_str = f"{skill_val:.3f}" if not np.isnan(skill_val) else "N/A"
+                prosp_acc = mt.get('prospective_accuracy', np.nan)
+                prosp_str = f"%{prosp_acc:.1f}" if not np.isnan(prosp_acc) else "N/A"
+                brier_val = mt.get('brier_score', np.nan)
+                brier_str = f"{brier_val:.3f}" if not np.isnan(brier_val) else "N/A"
                 rows+=(
                     f"<tr><td><b>{mn.upper()}</b></td>"
-                    f"<td>{mt.get('auc',0):.3f}</td>"
-                    f"<td>{mt.get('molchan_skill',0):.3f}</td>"
-                    f"<td>%{mt.get('prospective_accuracy',0):.1f}</td>"
-                    f"<td>{mt.get('brier_score',0):.3f}</td></tr>")
+                    f"<td>{auc_str}</td>"
+                    f"<td>{skill_str}</td>"
+                    f"<td>{prosp_str}</td>"
+                    f"<td>{brier_str}</td></tr>")
         if rows:
             perf=(
                 "<h3>Model Performans Metrikleri (Model Performance Metrics)</h3>"
+                "<p style='color:#d32f2f'><b>Not:</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür.</p>"
                 "<table style='width:100%;border-collapse:collapse'>"
                 "<tr><th>Model</th><th>AUC</th><th>Molchan Beceri Skoru (Skill Score)</th>"
                 "<th>Prospektif Dogruluk (Prospective Accuracy)</th><th>Brier Skoru (Brier Score)</th></tr>"
                 +rows+
                 "</table>"
                 "<p style='font-size:.9em;color:#666;margin-top:10px'>"
-                "<b>Molchan Beceri Skoru (Molchan Skill Score):</b> 1.0 = Mukemmel (Perfect), "
-                "0.0 = Rastgele (Random), &lt;0 = Rastgeleden kotu (Worse than random)<br>"
-                "<b>Prospektif Dogruluk (Prospective Accuracy):</b> Gercek zamanli tahmin simulasyonu basari orani "
-                "(Real-time prediction simulation success rate)</p>")
-    tbl=rt.to_html(index=False,escape=False)
-    html=(
+                "<b>Molchan Beceri Skoru:</b> 1.0 = Mukemmel, 0.0 = Rastgele, <0 = Rastgeleden kötü<br>"
+                "<b>Prospektif Dogruluk:</b> Gerçek zamanlı tahmin simülasyonu başarı oranı (optimum eşik ile)</p>")
+    tbl = rt.to_html(index=False, escape=False)
+    html = (
         "<!DOCTYPE html><html lang='tr'><head>"
         "<meta charset='UTF-8'>"
         "<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'>"
@@ -956,7 +1055,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         ".info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
         "<h1>Sismik Risk Analiz Raporu<br>"
-        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v17 - Sabit Bilimsel Etiketler)</span></h1>"
+        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v18 - Düzeltilmiş Metrikler)</span></h1>"
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | <b>Kullanici (User):</b> {user}</p>"
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
@@ -981,7 +1080,7 @@ def main():
     conn=None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v17 (Seismic Analysis v17 - SABİT BİLİMSEL ETİKETLER)")
+        print("Sismik Analiz v18 (Seismic Analysis v18 - DÜZELTİLMİŞ METRİKLER)")
         print(f"{'='*70}{X_}")
         db_exists = os.path.exists(db)
         conn=sqlite3.connect(db)
@@ -1052,7 +1151,9 @@ def main():
             dfr, CURRENT_USER, CURRENT_UTC_TIME,
             f"Toplam {len(dfr)} olay analiz edildi. "
             f"Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. "
-            f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition.)",
+            f"Düzeltilmiş metrik hesaplama (NaN geçerli değil). "
+            f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition. "
+            f"Corrected metric calculation.)",
             new_ids, ami, expl)
         elapsed=time.time()-t0
         print(f"\n{G_}{'='*70}")
