@@ -5,35 +5,34 @@ __pycache__/
 *.pyd
 .ipynb_checkpoints/
 
-# SQLite journal/WAL files (the main *.db is intentionally tracked)
-# Veritabanı güvenliği için auxiliary files ignore edilir
+# SQLite – main database file (AVOID BINARY CONFLICT)
+*.db
 *.db-journal
 *.db-wal
 *.db-shm
 
 # Trained model artifacts (regenerated at runtime)
-# Büyük dosyalar, her çalıştırmada yeniden eğitilir
 *.joblib
 *.keras
 *.h5
 *.pkl
 
-# Generated HTML reports (regenerated at runtime)
-# Her çalıştırmada yeniden üretilen HTML dosyaları
+# Generated HTML reports – but we need them in docs/ for GitHub Pages
+# So ignore only the root copies, not the docs/ copies
 deprem_analiz_raporu_sade.html
 deprem_haritasi_olasilik.html
 deprem_haritasi_tip.html
-
-# Generated plots - EXCEPT sensitivity analysis
-# Molchan diyagramları regenerated - track edilmez
 molchan_*.png
 
-# ✅ IMPORTANT: TRACK SENSITIVITY ANALYSIS (Research outputs)
-# Bu dosyalar bilimsel çıktı olduğu için TRACK EDİLECEK
-# sensitivity_analysis.png  - TRACK EDILIR (yorum satırı)
-# foreshock_sensitivity_analysis.csv - TRACK EDILIR (yorum satırı)
+# ✅ IMPORTANT: TRACK SENSITIVITY ANALYSIS (research outputs)
+!sensitivity_analysis.png
+!foreshock_sensitivity_analysis.csv
 
-# IDE / OS - Editor ve sistem dosyaları
+# We TRACK docs/ folder content for GitHub Pages
+!docs/
+docs/last_update.txt   # but last_update.txt is fine to track
+
+# IDE / OS
 .vscode/
 .idea/
 .DS_Store
