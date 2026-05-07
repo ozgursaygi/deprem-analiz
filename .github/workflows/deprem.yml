@@ -2,265 +2,66 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    # Her 6 saatte bir çalış
-    - cron: '0 */6 * * *'
-  # Manuel tetikleme
-  workflow_dispatch:
+    - cron: '0 */6 * * *' 
+  workflow_dispatch: 
+
+# --- KRİTİK EKLENTİ BURASI ---
+permissions:
+  contents: write
+# ----------------------------
 
 jobs:
-  earthquake-analysis:
+  build:
     runs-on: ubuntu-latest
-    
-    # Timeout: 45 dakika (çoğunlukla 15-25 dakika sürüyor)
-    timeout-minutes: 45
-    
+
     steps:
-      # 1. Repository'yi klonla
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Tam geçmiş
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      # 2. Python ortamını hazırla
+          fetch-depth: 0 
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          cache: 'pip'
-      
-      # 3. Gereklilikleri yükle
-      - name: Install dependencies
+
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "❌ requirements.txt bulunamadı!"
-            exit 1
-          fi
-      
-      # 4. Analiz komutu (ESKİ - kontrol için)
-      - name: Run earthquake analysis
-        id: analysis
-        run: |
-          echo "🚀 Deprem analizi başlıyor..."
-          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC') - Başlangıç" >> analysis.log
-          
-          python DTS_66_AFAD_LIVE.py 2>&1 | tee -a analysis.log
-          
-          # Çıkış kodu kontrol et
-          analysis_exit_code=${PIPESTATUS[0]}
-          echo "Analysis exit code: $analysis_exit_code" >> analysis.log
-          
-          if [ $analysis_exit_code -ne 0 ]; then
-            echo "❌ Analiz başarısız!"
-            cat analysis.log
-            exit 1
-          fi
-          
-          echo "✅ Analiz tamamlandı"
-          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC') - Tamamlandı" >> analysis.log
-      
-      # 5. Çıktı dosyalarını kontrol et
-      - name: Verify output files
-        id: verify
-        run: |
-          echo "🔍 Çıktı dosyaları kontrol ediliyor..."
-          
-          files_to_check=(
-            "deprem_analiz_raporu_sade.html"
-            "deprem_haritasi_tip.html"
-            "deprem_haritasi_olasilik.html"
-            "earthquakes_3_5_plus_scientific_v5.db"
-          )
-          
-          missing_files=()
-          
-          for file in "${files_to_check[@]}"; do
-            if [ -f "$file" ]; then
-              size=$(du -h "$file" | cut -f1)
-              echo "✅ $file ($size)"
-            else
-              echo "❌ $file BULUNAMADI!"
-              missing_files+=("$file")
-            fi
-          done
-          
-          if [ ${#missing_files[@]} -gt 0 ]; then
-            echo ""
-            echo "❌ Eksik dosyalar:"
-            for file in "${missing_files[@]}"; do
-              echo "   - $file"
-            done
-            echo ""
-            echo "⚠️  Rapor dosyaları oluşturulamadı!"
-            exit 1
-          fi
-          
-          echo ""
-          echo "✅ Tüm dosyalar başarıyla oluşturuldu"
-      
-      # 6. Rapor metriklerini doğrula
-      - name: Validate metrics in report
-        id: validate
-        run: |
-          echo "📊 Metrik doğrulaması başlıyor..."
-          
-          # HTML dosyasını kontrol et
-          if grep -q "0.000" deprem_analiz_raporu_sade.html 2>/dev/null; then
-            if grep -q "Molchan Beceri Skoru" deprem_analiz_raporu_sade.html; then
-              echo "⚠️  UYARI: Molchan Beceri Skoru = 0.000 olarak görülüyor"
-              echo "   Bu rastgele tahmin anlamına gelebilir"
-              echo "   DTS_66_FIXES.py'deki validate_all_metrics() kontrol et"
-            fi
-          fi
-          
-          echo "✅ Metrik kontrol tamamlandı"
-      
-      # 7. Git yapılandırması
-      - name: Configure git
-        run: |
-          git config --local user.email "github-actions@github.com"
-          git config --local user.name "GitHub Actions Bot"
-          git config --local pull.rebase false
-      
-      # 8. Değişiklikleri git'e ekle
-      - name: Stage changes
-        id: stage
-        run: |
-          echo "📝 Değişiklikler hazırlanıyor..."
-          
-          git add -A
-          
-          # Değişiklik var mı?
-          if git diff --cached --quiet; then
-            echo "ℹ️  Yeni değişiklik yok"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "✅ Değişiklikler hazırlandı"
-            git diff --cached --name-only
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
-      
-      # 9. Commit oluştur (eğer değişiklik varsa)
-      - name: Create commit
-        if: steps.stage.outputs.has_changes == 'true'
-        run: |
-          timestamp=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          git commit -m "Auto-update: $timestamp
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-Analysis status: Success
-Report generated: $(date -u +'%Y-%m-%d at %H:%M:%S UTC')
-GitHub Actions Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-      
-      # 10. Repository'ye push et (retry mekanizması ile)
-      - name: Push changes
-        id: push
-        if: steps.stage.outputs.has_changes == 'true'
+      - name: Run Analysis Script
+        run: python DTS_66_AFAD_LIVE.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and Push Changes
         run: |
-          echo "🚀 Push işlemi başlıyor..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          max_retries=3
-          retry_count=0
-          push_success=false
+          git add -A docs/
+          git add earthquakes_3_5_plus_scientific_v5.db
+          git add deprem_analiz_raporu_sade.html deprem_haritasi_tip.html deprem_haritasi_olasilik.html 2>/dev/null || true
+          git add molchan_xgb.png molchan_rf.png 2>/dev/null || true
+          git add foreshock_sensitivity_analysis.csv sensitivity_analysis.png 2>/dev/null || true
           
-          while [ $retry_count -lt $max_retries ] && [ "$push_success" = "false" ]; do
-            echo "Push attempt: $((retry_count + 1))/$max_retries"
+          if git diff --staged --quiet; then
+            echo "Değişiklik yok, commit atlanıyor."
+          else
+            git commit -m "Otomatik veri ve analiz güncellemesi [skip ci]"
             
-            if git push origin main 2>&1; then
-              echo "✅ Push başarıyla tamamlandı"
-              push_success=true
-            else
-              retry_count=$((retry_count + 1))
-              if [ $retry_count -lt $max_retries ]; then
-                echo "⏳ $((5 * retry_count)) saniye bekliyor..."
-                sleep $((5 * retry_count))
+            for i in 1 2 3; do
+              echo "Deneme $i..."
+              git pull --rebase origin main
+              
+              if git push origin main; then
+                echo "Başarıyla güncellendi."
+                exit 0
               fi
-            fi
-          done
-          
-          if [ "$push_success" = "false" ]; then
-            echo "❌ Push başarısız: Tüm retry'lar tükendi"
+              
+              echo "Push başarısız, 10 saniye bekleniyor..."
+              sleep 10
+            done
             exit 1
           fi
-      
-      # 11. Başarı raporu
-      - name: Report success
-        if: success()
-        run: |
-          echo "✅ İŞ BAŞARIYLA TAMAMLANDI"
-          echo ""
-          echo "📊 Özet:"
-          echo "  - Analiz: ✅ Tamamlandı"
-          echo "  - Dosyalar: ✅ Doğrulandı"
-          echo "  - Metrikler: ✅ Kontrol edildi"
-          echo "  - Push: ✅ Başarılı"
-          echo ""
-          echo "⏰ Zaman: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-      
-      # 12. Hata raporu
-      - name: Report failure
-        if: failure()
-        run: |
-          echo "❌ İŞ BAŞARISIZ"
-          echo ""
-          echo "📋 Son hata:"
-          tail -20 analysis.log 2>/dev/null || echo "Log dosyası bulunamadı"
-          echo ""
-          echo "⏰ Zaman: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo ""
-          echo "🔧 Kontrol Listesi:"
-          echo "  ❓ AFAD API accessible mi?"
-          echo "  ❓ Python paketleri yüklendi mi?"
-          echo "  ❓ Veri tabanı (*.db) güncel mi?"
-          echo "  ❓ Model dosyaları (*.joblib, *.keras) var mı?"
-          exit 1
-
-  # ============================================================================
-  # İKİNCİ İŞ: GITHUB PAGES'E DEPLOY (Raporu web'de yayımla)
-  # ============================================================================
-  
-  deploy-pages:
-    needs: earthquake-analysis
-    if: success()  # Yalnızca analiz başarılı olursa
-    
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-      
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v2
-        with:
-          path: 'docs'
-      
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v3
-
-
-# ============================================================================
-# İŞ SAHIBINE NOTIFICATION GÖNDERMEK İÇİN (İsteğe Bağlı)
-# ============================================================================
-#
-# # Başarısız olursa issue aç:
-# - name: Create issue on failure
-#   if: failure()
-#   uses: actions/github-script@v7
-#   with:
-#     github-token: ${{ secrets.GITHUB_TOKEN }}
-#     script: |
-#       github.rest.issues.create({
-#         owner: context.repo.owner,
-#         repo: context.repo.repo,
-#         title: `❌ Deprem Analizi başarısız: ${new Date().toLocaleString()}`,
-#         body: `Aşağıdaki linke tıkla: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
-#       })
