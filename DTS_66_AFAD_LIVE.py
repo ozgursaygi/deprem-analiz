@@ -42,7 +42,6 @@ except ImportError:
 import matplotlib.pyplot as plt
 import shutil
 
-
 # Renk kodları
 R_ = '\033[91m'; G_ = '\033[92m'; P_ = '\033[95m'
 C_ = '\033[96m'; Y_ = '\033[93m'; B_ = '\033[94m'; X_ = '\033[0m'
@@ -1139,154 +1138,153 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         f.write(html)
     print(f"{G_}✓ Rapor olusturuldu: deprem_analiz_raporu_sade.html{X_}")
 
-# --- KLASÖR AYARI ---
-DOCS_DIR = "docs"
-if not os.path.exists(DOCS_DIR):
-    os.makedirs(DOCS_DIR)
-
-# Renk kodları ve Sabitler
-R_ = '\033[91m'; G_ = '\033[92m'; P_ = '\033[95m'
-C_ = '\033[96m'; Y_ = '\033[93m'; B_ = '\033[94m'; X_ = '\033[0m'
-CURRENT_UTC_TIME = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-FORESHOCK_MAG_THRESHOLD = 5.5
-FORESHOCK_TIME_WINDOW_DAYS = 30
-FORESHOCK_SPATIAL_RADIUS_KM = 50
-FORESHOCK_MIN_MAG_DIFF = 0.8
-ENHANCED_FEATURES = [
-    'mag', 'depth', 'b_value_local', 'event_rate_local', 'time_since_last',
-    'mag_completeness', 'spatial_density', 'temporal_clustering',
-    'mag_trend', 'depth_clustering', 'energy_rate', 'swarm_indicator',
-    'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index'
-]
-TARGET = 'is_foreshock'
-
 # ============================================================================
-# YARDIMCI FONKSİYONLAR
+# ANA FONKSİYON
 # ============================================================================
-@njit
-def haversine_distance_numba(lon1, lat1, lon2, lat2):
-    R = 6371.0
-    lon1 = np.radians(lon1); lat1 = np.radians(lat1)
-    lon2 = np.radians(lon2); lat2 = np.radians(lat2)
-    a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
-    return R * 2 * np.arcsin(np.sqrt(a))
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    return haversine_distance_numba(lon1, lat1, lon2, lat2)
-
-def standardize_date(dv):
-    if pd.isna(dv) or dv == "": return None
-    try:
-        ds = str(dv).strip()
-        dt = pd.to_datetime(ds, errors='coerce', utc=True)
-        return dt.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(dt) else None
-    except: return None
-
-def setup_database(conn, tn):
-    cur = conn.cursor()
-    cur.execute(f"CREATE TABLE IF NOT EXISTS {tn} (eventID TEXT PRIMARY KEY, time TEXT, latitude REAL, longitude REAL, depth REAL, mag REAL, place TEXT)")
-    conn.commit()
-
-# ============================================================================
-# ANALİZ VE HESAPLAMA
-# ============================================================================
-def generate_html_report(df, filename="deprem_analiz_raporu_sade.html"):
-    """Raporu doğrudan docs klasörüne oluşturur."""
-    filepath = os.path.join(DOCS_DIR, filename)
-    
-    html = f"""
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Sismik Risk Analiz Raporu</title>
-        <style>
-            body {{ font-family: sans-serif; background: #f4f7f6; padding: 20px; }}
-            .container {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
-            h1 {{ color: #2c3e50; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            th, td {{ padding: 12px; border: 1px solid #ddd; text-align: left; }}
-            th {{ background: #3498db; color: white; }}
-            .risk-high {{ color: #e74c3c; font-weight: bold; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Sismik Risk ve Öncü Deprem Analizi</h1>
-            <p>Son Güncelleme (UTC): {CURRENT_UTC_TIME}</p>
-            <table>
-                <tr>
-                    <th>Tarih</th><th>Yer</th><th>Büyüklük</th><th>Öncü Olasılığı</th>
-                </tr>
-    """
-    
-    # En son 20 depremi göster
-    dfr = df.sort_values('time', ascending=False).head(20)
-    for _, row in dfr.iterrows():
-        prob = row.get('olasilik', 0) * 100
-        html += f"""
-                <tr>
-                    <td>{row['time']}</td>
-                    <td>{row['place']}</td>
-                    <td>{row['mag']}</td>
-                    <td class="{'risk-high' if prob > 50 else ''}">%{prob:.1f}</td>
-                </tr>
-        """
-    
-    html += "</table></div></body></html>"
-    
-    with open(filepath, "w", encoding='utf-8') as f:
-        f.write(html)
-    
-    # GitHub Pages ana sayfası için kopyala
-    shutil.copy(filepath, os.path.join(DOCS_DIR, "index.html"))
-    return filepath
-
 def main():
     t0 = time.time()
-    db_name = "deprem_sistemi.db"
-    tn = "depremler"
-    conn = sqlite3.connect(db_name)
-    
-    setup_database(conn, tn)
-    
-    # Veri Çekme (AFAD API)
-    print(f"{C_}Veri çekiliyor...{X_}")
+    db = "earthquakes_3_5_plus_scientific_v5.db"
+    tn = "earthquake_catalog"
+    csv_file = "ridgecrest_catalog.csv"
+    conn = None
     try:
-        resp = requests.get("https://deprem.afad.gov.tr/apiv2/event/filter", 
-                            params={'minmag': 3.5, 'start': (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')})
-        if resp.status_code == 200:
-            df_api = pd.DataFrame(resp.json())
-            df_api.rename(columns={'date': 'time', 'magnitude': 'mag', 'location': 'place'}, inplace=True)
-            df_api['time'] = df_api['time'].apply(standardize_date)
-            df_api.to_sql(tn, conn, if_exists='replace', index=False)
+        print(f"{C_}{'='*70}")
+        print("Sismik Analiz v19 (Seismic Analysis v19 - Düzeltilmiş Metrikler & Docs Kopyalama)")
+        print(f"{'='*70}{X_}")
+
+        # Veritabanı bağlantısı ve tablo oluşturma
+        conn = sqlite3.connect(db)
+        new_db = setup_database(conn, tn)
+        if new_db or not os.path.exists(db):
+            print(f"{C_}Veritabani yeni olusturuldu. Gecmis datalar CSV'den aktariliyor...{X_}")
+            load_historical_csv(conn, tn, csv_file)
+        else:
+            # Zaten varsa, sadece güncelle
+            pass
+
+        force = False
+        new_ids = fetch_and_load_api_data(conn, tn)
+        if new_ids:
+            force = True
+
+        df = pd.read_sql_query(f"SELECT * FROM {tn}", conn)
+        df.drop_duplicates(subset=['eventID'], inplace=True, keep='last')
+        df['time'] = pd.to_datetime(df['time'], utc=True)
+
+        if len(df) < 100:
+            fetch_and_load_api_data(conn, tn, start_override='2023-01-01 00:00:00')
+            df = pd.read_sql_query(f"SELECT * FROM {tn}", conn)
+            df.drop_duplicates(subset=['eventID'], inplace=True, keep='last')
+            df['time'] = pd.to_datetime(df['time'], utc=True)
+            force = True
+            if len(df) < 100:
+                print(f"{R_}Yetersiz veri (Insufficient data).{X_}")
+                return
+
+        print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
+        # Bölge bilgisini hesapla (gösteri amaçlı, sabit bölgeler yoksa atla)
+        # SEISMIC_ZONES tanımlı değilse geçici tanımla
+        if 'SEISMIC_ZONES' not in globals():
+            global SEISMIC_ZONES
+            SEISMIC_ZONES = {}
+        if 'detect_seismic_zone' not in globals():
+            def detect_seismic_zone(lat, lon):
+                return "Unknown"
+        df['seismic_zone'] = df.apply(lambda row: detect_seismic_zone(row['latitude'], row['longitude']), axis=1)
+        zone_counts = df['seismic_zone'].value_counts()
+        print(f"{G_}Bolge Dagilimi:{X_}")
+        for zone, count in zone_counts.items():
+            print(f"  {zone}: {count} olay")
+
+        df = calc_features(df)
+        df = classify_eq_type(df)
+
+        models, metrics, expl = train_sklearn_improved(df, new_ids, force=force)
+        lm, ls, lmet = train_lstm(df, new_ids, force=force)
+
+        ami = {**metrics}
+        if lmet:
+            ami['lstm'] = lmet
+
+        dfr = df.copy()
+        t7 = pd.to_datetime(datetime.utcnow(), utc=True) - timedelta(days=7)
+        rm = (dfr['time'] >= t7) | (dfr['olasilik'].isnull())
+        aids = set(new_ids) | set(dfr[rm]['eventID'])
+        if aids:
+            dtp = dfr[dfr['eventID'].isin(aids)].copy()
+            preds = predict_unc(dtp, models, lm, ls)
+            if not preds.empty:
+                preds['eventID'] = dtp['eventID'].values
+                dfr = pd.merge(dfr, preds, on='eventID', how='left', suffixes=('', '_new'))
+                for col in ['olasilik', 'confidence_score', 'total_uncertainty']:
+                    nc = f'{col}_new'
+                    if nc in dfr.columns:
+                        dfr[col] = dfr[nc].fillna(dfr[col])
+                        dfr.drop(columns=[nc], inplace=True)
+
+        # Haritaları oluştur
+        map_by_type(dfr)
+        map_by_prob(dfr)
+
+        # Raporu oluştur
+        gen_report(
+            dfr, CURRENT_USER, CURRENT_UTC_TIME,
+            f"Toplam {len(dfr)} olay analiz edildi. "
+            f"Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. "
+            f"Düzeltilmiş metrik hesaplama (NaN geçerli değil). "
+            f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition. "
+            f"Corrected metric calculation.)",
+            new_ids, ami, expl
+        )
+
+        # ========== RAPORLARI docs/ KLASÖRÜNE KOPYALA ==========
+        os.makedirs("docs", exist_ok=True)
+        rapor_list = [
+            "deprem_analiz_raporu_sade.html",
+            "deprem_haritasi_tip.html",
+            "deprem_haritasi_olasilik.html",
+            "foreshock_sensitivity_analysis.csv",
+            "sensitivity_analysis.png",
+            "molchan_xgb.png",
+            "molchan_rf.png"
+        ]
+        for dosya in rapor_list:
+            if os.path.exists(dosya):
+                shutil.copy2(dosya, f"docs/{dosya}")
+                print(f"{G_}✓ Kopyalandi: {dosya} -> docs/{dosya}{X_}")
+            else:
+                print(f"{Y_}Uyarı: {dosya} bulunamadi, kopyalanmadi.{X_}")
+        # Son güncelleme zamanı
+        with open("docs/last_update.txt", "w", encoding='utf-8') as f:
+            f.write(CURRENT_UTC_TIME)
+        print(f"{G_}✓ last_update.txt güncellendi.{X_}")
+
+        # Veritabanını güncelle (ancak repoya ekleme, .gitignore kontrolü)
+        dfs = dfr.copy()
+        dfs['time'] = dfs['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({tn})")
+        db_cols = [i[1] for i in cur.fetchall()]
+        dfs[db_cols].to_sql(tn, conn, if_exists='replace', index=False)
+
+        elapsed = time.time() - t0
+        print(f"\n{G_}{'='*70}")
+        print(f"✓ TAMAMLANDI (COMPLETED)")
+        print(f"Süre (Duration): {elapsed:.1f} saniye (seconds)")
+        print(f"{'='*70}{X_}")
+        print(f"\n{G_}Üretilen Dosyalar (Generated Files):{X_}")
+        for d in rapor_list:
+            if os.path.exists(d):
+                print(f"  ✓ {d}")
+        print("  ✓ last_update.txt")
+        print("\nNot: Veritabanı dosyası .gitignore ile repodan hariç tutulmuştur. Binary conflict önlenmiştir.")
+
     except Exception as e:
-        print(f"{R_}Veri hatası: {e}{X_}")
-
-    # Veriyi Analiz Et
-    df = pd.read_sql(f"SELECT * FROM {tn}", conn)
-    if df.empty:
-        print(f"{R_}Veri bulunamadı!{X_}")
-        return
-
-    # Basit Olasılık Tahmini (Model dosyaları eksikse hata vermemesi için)
-    # Burada normalde model.predict_proba() çalışmalı.
-    df['olasilik'] = np.random.random(len(df)) * 0.4 # Örnek rastgele veri
-    df.loc[df['mag'] > 4.5, 'olasilik'] += 0.3
-
-    # Raporları DOĞRUDAN docs klasörüne yaz
-    print(f"{C_}Raporlar oluşturuluyor...{X_}")
-    generate_html_report(df)
-    
-    # CSV ve Diğer analiz çıktılarını da docs içine at
-    df.to_csv(os.path.join(DOCS_DIR, "analiz_sonuclari.csv"), index=False)
-    
-    # last_update.txt
-    with open(os.path.join(DOCS_DIR, "last_update.txt"), "w") as f:
-        f.write(CURRENT_UTC_TIME)
-
-    print(f"{G_}✓ İşlem başarıyla tamamlandı. Dosyalar docs/ klasörüne kaydedildi.{X_}")
-    conn.close()
+        print(f"{R_}HATA (ERROR): {e}{X_}")
+        print(traceback.format_exc())
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == "__main__":
     main()
