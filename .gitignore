@@ -17,23 +17,20 @@ __pycache__/
 *.h5
 *.pkl
 
-# Generated HTML reports in ROOT – but NOT in docs/
-/deprem_analiz_raporu_sade.html
-/deprem_haritasi_olasilik.html
-/deprem_haritasi_tip.html
-/molchan_*.png
+# Generated HTML reports – but we need them in docs/ for GitHub Pages
+# So ignore only the root copies, not the docs/ copies
+deprem_analiz_raporu_sade.html
+deprem_haritasi_olasilik.html
+deprem_haritasi_tip.html
+molchan_*.png
 
-# ✅ TRACK sensitivity analysis files in ROOT (research outputs)
-!/sensitivity_analysis.png
-!/foreshock_sensitivity_analysis.csv
+# ✅ IMPORTANT: TRACK SENSITIVITY ANALYSIS (research outputs)
+!sensitivity_analysis.png
+!foreshock_sensitivity_analysis.csv
 
-# ✅ TRACK docs/ folder content for GitHub Pages
-/docs/**
-!/docs/
-!/docs/*.html
-!/docs/*.csv
-!/docs/*.png
-!/docs/*.txt
+# We TRACK docs/ folder content for GitHub Pages
+!docs/
+docs/last_update.txt   # but last_update.txt is fine to track
 
 # IDE / OS
 .vscode/
