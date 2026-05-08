@@ -2,7 +2,7 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # Her 6 saatte bir
+    - cron: '0 */12 * * *'   # Her 12 saatte bir
   workflow_dispatch:         # Manuel çalıştırma
 
 # --- KRİTİK İZİN ---
@@ -50,7 +50,8 @@ jobs:
             
             for i in 1 2 3; do
               echo "Deneme $i..."
-              git pull --rebase origin main
+              # Hata almamak için unstaged değişiklikleri saklayıp (autostash) rebase yapıyoruz
+              git pull --rebase --autostash origin main
               
               if git push origin main; then
                 echo "Başarıyla güncellendi."
