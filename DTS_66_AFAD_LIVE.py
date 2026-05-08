@@ -869,7 +869,7 @@ def train_sklearn_improved(df_full, new_ids, force=False):
                         mdl = RandomForestClassifier(**p)
                     return cross_val_score(mdl, Xtr, ytr, cv=TimeSeriesSplit(n_splits=3), scoring='roc_auc').mean()
                 study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler())
-                study.optimize(obj, n_trials=30, show_progress_bar=False)
+                study.optimize(obj, n_trials=5, show_progress_bar=False)
                 bp = study.best_params
             except Exception as e:
                 print(f"{Y_}Optuna hatasi ({mtype}): {e}{X_}")
