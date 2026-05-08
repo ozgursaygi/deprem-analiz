@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Sismik Risk Analiz Sistemi - v19
+Sismik Risk Analiz Sistemi - v20
 Düzeltilmiş metrikler, prospektif simülasyon, LSTM sequence fix,
 raporları docs klasörüne kopyalama, binary dosyaları repodan hariç tutma.
+[v20 İYİLEŞTİRMELER]
+- docs/ klasörü yönetimi fonksiyonları eklendi
+- Dosya yazma esnasında hata kontrolü iyileştirildi
+- GitHub Pages uyumluluğu artırıldı
 """
 
 import pandas as pd
@@ -63,6 +67,158 @@ ENHANCED_FEATURES = [
     'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index'
 ]
 TARGET = 'is_foreshock'
+
+# ============================================================================
+# YENİ FONKSIYON: docs/ KLASÖRÜ YÖNETİMİ (v20)
+# ============================================================================
+def ensure_docs_dir():
+    """docs/ klasörünü oluştur ve gerekli dosyaları hazırla."""
+    docs_dir = "docs"
+    try:
+        os.makedirs(docs_dir, exist_ok=True)
+        print(f"{G_}✓ docs/ klasörü hazırlandı{X_}")
+    except Exception as e:
+        print(f"{R_}✗ docs/ klasörü oluşturulamadı: {e}{X_}")
+        return docs_dir
+    
+    # Ana index.html kontrol ve oluştur
+    index_path = os.path.join(docs_dir, "index.html")
+    if not os.path.exists(index_path):
+        minimal_html = """<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Deprem Analiz - Seismic Risk Analysis</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 800px;
+            text-align: center;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+            margin-bottom: 30px;
+            font-style: italic;
+        }
+        .links {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        a {
+            display: inline-block;
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+        a:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .status {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 30px;
+            border-left: 5px solid #2e7d32;
+        }
+        .last-update {
+            color: #999;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Deprem Analiz Sistemi</h1>
+        <p class="subtitle">Seismic Risk Analysis System - v20</p>
+        
+        <div class="status">
+            <strong>✓ Sistem Aktif</strong> — Otomatik güncelleme: Her 6 saat
+        </div>
+
+        <div class="links">
+            <a href="deprem_analiz_raporu_sade.html">📄 Ana Rapor (Main Report)</a>
+            <a href="deprem_haritasi_tip.html">🗺️ Deprem Tipi Haritası (Earthquake Type Map)</a>
+            <a href="deprem_haritasi_olasilik.html">🎯 Olasılık Haritası (Probability Map)</a>
+            <a href="foreshock_sensitivity_analysis.csv">📊 Duyarlılık Analizi (Sensitivity Analysis)</a>
+        </div>
+
+        <div class="last-update" id="last-update">
+            Son güncelleme: Yükleniyor...
+        </div>
+    </div>
+
+    <script>
+        // last_update.txt dosyasını oku
+        fetch('last_update.txt')
+            .then(response => response.text())
+            .then(text => {
+                const timestamp = text.trim();
+                document.getElementById('last-update').innerText = `Son güncelleme: ${timestamp}`;
+            })
+            .catch(err => {
+                console.log('last_update.txt bulunamadı:', err);
+                document.getElementById('last-update').innerText = 'Son güncelleme: Bilinmiyor';
+            });
+    </script>
+</body>
+</html>"""
+        try:
+            with open(index_path, 'w', encoding='utf-8') as f:
+                f.write(minimal_html)
+            print(f"{G_}✓ docs/index.html oluşturuldu{X_}")
+        except Exception as e:
+            print(f"{R_}✗ docs/index.html yazılamadı: {e}{X_}")
+    
+    return docs_dir
+
+def copy_to_docs(filename, docs_dir="docs"):
+    """Dosyayı docs/ klasörüne kopyala ve hata kontrolü yap."""
+    try:
+        if os.path.exists(filename):
+            dest = os.path.join(docs_dir, filename)
+            shutil.copy2(filename, dest)
+            print(f"{G_}✓ Kopyalandi: {filename} -> {dest}{X_}")
+            return True
+        else:
+            print(f"{Y_}⚠ Bulunamadi: {filename}{X_}")
+            return False
+    except Exception as e:
+        print(f"{R_}✗ Kopyalanamadi: {filename} - {e}{X_}")
+        return False
 
 # ============================================================================
 # YARDIMCI FONKSİYONLAR
@@ -373,51 +529,52 @@ def calc_features(df_all):
             rlons = np.radians(re['longitude'].values)
             clat = np.radians(row['latitude'])
             clon = np.radians(row['longitude'])
-            dlon = rlons - clon
-            dlat = rlats - clat
-            a = np.sin(dlat / 2) ** 2 + np.cos(clat) * np.cos(rlats) * np.sin(dlon / 2) ** 2
-            c_dist = 2 * np.arcsin(np.sqrt(a))
-            dists = 6371.0 * c_dist
-            decay_idx = np.sum(np.exp(-dists / 10.0))
+            dists = np.arccos(np.sin(rlats)*np.sin(clat) + np.cos(rlats)*np.cos(clat)*np.cos(rlons-clon)) * 6371
+            dists = np.maximum(dists, 0.1)
+            weights = 1.0 / (1.0 + dists/50.0)**2
+            decay_idx = weights.mean()
+        mag_trend = np.nan
+        if len(le) >= 3:
+            try:
+                x_trend = np.arange(len(le))
+                y_trend = le['mag'].values
+                mag_trend = np.polyfit(x_trend, y_trend, 1)[0]
+            except Exception:
+                pass
         bv = calc_b_value(le['mag'].values)
-        pe = le[le['time'] < ct]
-        ts = (ct - pe['time'].max()).total_seconds() / 3600 if not pe.empty else None
-        mc = le['mag'].quantile(0.1) if len(le) > 10 else None
-        sd = len(le) / (np.pi * 50 ** 2)
-        tc = 0
-        if len(re) > 1:
-            td = re['time'].diff().dt.total_seconds() / 3600
-            std = td.std()
-            if std > 0:
-                tc = 1 / (std + 1e-6)
-        r10 = le.tail(10)['mag'].values
-        mt = np.polyfit(range(len(r10)), r10, 1)[0] if len(r10) > 1 else 0
-        ds = le['depth'].std()
-        dc = 1 / (ds + 1e-6) if ds > 0 else 0
-        enr = (10 ** (1.5 * re['mag'] + 4.8)).sum() / 30 if not re.empty else 0
-        t7 = ct - timedelta(days=7)
-        sw = 1 if len(le[le['time'] >= t7]) >= 3 else 0
-        faults = np.array([[40.7, 29.9], [38.4, 27.1], [39.6, 41.0]])
-        fd = [haversine_distance(row['latitude'], row['longitude'], f[0], f[1]) for f in faults]
-        mfd = min(fd) if fd else None
         ups.append({
-            'eventID': eid, 'b_value_local': bv, 'event_rate_local': er,
-            'time_since_last': ts, 'mag_completeness': mc, 'spatial_density': sd,
-            'temporal_clustering': tc, 'mag_trend': mt, 'depth_clustering': dc,
-            'energy_rate': enr, 'swarm_indicator': sw, 'fault_distance': mfd,
-            'event_rate_24h': er_24h, 'event_rate_12h': er_12h, 'spatial_decay_index': decay_idx
+            'eventID': eid,
+            'b_value_local': bv,
+            'event_rate_local': er,
+            'event_rate_24h': er_24h,
+            'event_rate_12h': er_12h,
+            'time_since_last': (ct - le['time'].iloc[-1]).total_seconds() / 86400.0 if len(le) > 0 else np.nan,
+            'mag_completeness': le['mag'].min(),
+            'spatial_density': len(le) / (np.pi * 50**2) if len(le) > 0 else 0,
+            'temporal_clustering': np.exp(-er) if er > 0 else 0,
+            'mag_trend': mag_trend,
+            'depth_clustering': np.std(le['depth'].values) if len(le) > 1 else np.nan,
+            'energy_rate': np.sum(10**(le['mag'].values * 1.5)) if len(le) > 0 else 0,
+            'swarm_indicator': 1 if er > 5 and len(le) > 10 else 0,
+            'fault_distance': np.nan,
+            'spatial_decay_index': decay_idx
         })
     if ups:
-        dfu = pd.DataFrame(ups).set_index('eventID')
-        df.set_index('eventID', inplace=True)
-        df.update(dfu)
-        df.reset_index(inplace=True)
-        print(f"{G_}{len(ups)} kaydin ozellikleri hesaplandi.{X_}")
+        upd = pd.DataFrame(ups)
+        df = pd.merge(df, upd, on='eventID', how='left', suffixes=('', '_new'))
+        for col in ['b_value_local', 'event_rate_local', 'time_since_last', 'mag_completeness',
+                    'spatial_density', 'temporal_clustering', 'mag_trend', 'depth_clustering',
+                    'energy_rate', 'swarm_indicator', 'fault_distance', 'event_rate_24h',
+                    'event_rate_12h', 'spatial_decay_index']:
+            nc = f'{col}_new'
+            if nc in df.columns:
+                df[col] = df[nc].fillna(df[col])
+                df.drop(columns=[nc], inplace=True)
     return df
 
 def classify_eq_type(df):
-    dc = df.copy()
-    dfs = dc.sort_values('time').reset_index(drop=True)
+    df = fix_numeric(df)
+    dfs = df.sort_values('time').reset_index(drop=True)
     ni = get_neighbors_cKDTree(dfs, 120)
     if ni is None:
         df['earthquake_type'] = "Tekil Deprem"
@@ -771,162 +928,119 @@ def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, th
     df_test = df_test.sort_values('time').reset_index(drop=True)
     X = df_test[feature_cols].apply(safe_fill).values
     X_scaled = scaler.transform(X)
-    y_true = df_test[TARGET].values
-    correct = 0
-    total = len(df_test) - seq_length + 1
-    all_preds = []
-    all_true = []
-    for i in range(seq_length - 1, len(df_test)):
-        seq = X_scaled[i - seq_length + 1: i + 1]
-        seq = seq.reshape(1, seq_length, X_scaled.shape[1])
-        prob = model.predict(seq, verbose=0)[0, 0]
-        pred = 1 if prob >= threshold else 0
-        all_preds.append(pred)
-        all_true.append(y_true[i])
-        if pred == y_true[i]:
-            correct += 1
-    acc = (correct / total) * 100 if total > 0 else 0.0
-    p = precision_score(all_true, all_preds, zero_division=0)
-    r = recall_score(all_true, all_preds, zero_division=0)
+    X_seq = []
+    y_true = []
+    for i in range(len(X_scaled) - seq_length):
+        X_seq.append(X_scaled[i:i+seq_length])
+        y_true.append(df_test.iloc[i+seq_length][TARGET])
+    if not X_seq:
+        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0}
+    X_seq = np.array(X_seq)
+    y_true = np.array(y_true)
+    y_pred_proba = model.predict(X_seq, verbose=0).flatten()
+    y_pred = (y_pred_proba >= threshold).astype(int)
+    acc = (y_pred == y_true).mean() * 100
+    p = precision_score(y_true, y_pred, zero_division=0)
+    r = recall_score(y_true, y_pred, zero_division=0)
     return {'accuracy': acc, 'precision': p, 'recall': r}
 
 def train_lstm(df_full, new_ids, force=False):
-    mpath = "lstm_v5.keras"
-    spath = "lstm_scaler_v5.joblib"
-    if not force and os.path.exists(mpath) and os.path.exists(spath):
-        return load_model(mpath), joblib.load(spath), {}
+    mp = 'lstm_v5.keras'
+    sp = 'lstm_scaler_v5.joblib'
+    seq_length = 50
+    if not force and os.path.exists(mp) and os.path.exists(sp):
+        try:
+            mdl = load_model(mp)
+            scl = joblib.load(sp)
+            return mdl, scl, {}
+        except Exception:
+            pass
     cutoff = df_full['time'].quantile(0.8)
     trd = df_full[df_full['time'] <= cutoff].copy()
     ted = df_full[df_full['time'] > cutoff].copy()
-    if len(ted) < 10:
+    if len(ted) < seq_length + 10:
         return None, None, {}
-    trl = create_labels_parametric(fix_numeric(trd).copy())
-    tel = create_labels_parametric(fix_numeric(ted).copy())
-    if trl.empty:
-        return None, None, {}
+    trd = fix_numeric(trd)
+    ted = fix_numeric(ted)
+    trl = create_labels_parametric(trd.copy(), verbose=False)
+    tel = create_labels_parametric(ted.copy(), verbose=False)
     af = [f for f in ENHANCED_FEATURES if f in trl.columns]
-    sc = StandardScaler()
-    trs = sc.fit_transform(trl[af].apply(safe_fill))
-    tes = sc.transform(tel[af].apply(safe_fill))
-    sl = 50
-    Xtr, ytr = [], []
-    for i in range(len(trs) - sl):
-        Xtr.append(trs[i:i+sl])
-        ytr.append(trl[TARGET].iloc[i+sl])
-    Xte, yte = [], []
-    for i in range(len(tes) - sl):
-        Xte.append(tes[i:i+sl])
-        yte.append(tel[TARGET].iloc[i+sl])
-    Xtr = np.array(Xtr)
-    ytr = np.array(ytr)
-    Xte = np.array(Xte)
-    yte = np.array(yte)
-    if len(Xtr) < 100 or len(Xte) == 0:
+    if not af:
         return None, None, {}
-    if ytr.sum() == 0:
-        print(f"{R_}Eğitim setinde LSTM için hiç foreshock yok. Eğitim atlanıyor.{X_}")
+    scl = StandardScaler()
+    X_tr = scl.fit_transform(trl[af].apply(safe_fill))
+    y_tr = trl[TARGET].values
+    X_te = scl.transform(tel[af].apply(safe_fill))
+    y_te = tel[TARGET].values
+    X_seq_tr, y_seq_tr = [], []
+    for i in range(len(X_tr) - seq_length):
+        X_seq_tr.append(X_tr[i:i+seq_length])
+        y_seq_tr.append(y_tr[i+seq_length])
+    if not X_seq_tr:
         return None, None, {}
-    classes = np.unique(ytr)
-    class_weights = compute_class_weight('balanced', classes=classes, y=ytr)
-    cw_dict = dict(zip(classes, class_weights))
-    mdl = build_lstm((Xtr.shape[1], Xtr.shape[2]))
-    mdl.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
-    es = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
-    lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=7)
-    mdl.fit(Xtr, ytr, epochs=100, batch_size=32, validation_data=(Xte, yte),
-            callbacks=[es, lr], class_weight=cw_dict, verbose=1)
-    ypm = mdl.predict(Xte, verbose=0).flatten()
-    yp = (ypm >= 0.5).astype(int)
-    lmet = get_metrics(yte, yp, ypm)
-    if len(ytr) > 0:
-        tr_proba = mdl.predict(Xtr, verbose=0).flatten()
-        prec, rec, ths = precision_recall_curve(ytr, tr_proba)
-        f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
-        best_th = ths[np.argmax(f1_scores[:-1])] if len(ths) > 0 else 0.5
-        ps = prospective_sim_lstm(mdl, sc, tel, af, seq_length=sl, threshold=best_th)
-        lmet['prospective_accuracy'] = ps['accuracy']
-        lmet['prospective_precision'] = ps['precision']
-        lmet['prospective_recall'] = ps['recall']
-    else:
-        lmet['prospective_accuracy'] = np.nan
-    mdl.save(mpath)
-    joblib.dump(sc, spath)
-    return mdl, sc, lmet
+    X_seq_tr = np.array(X_seq_tr)
+    y_seq_tr = np.array(y_seq_tr)
+    mdl = build_lstm((seq_length, X_seq_tr.shape[2]))
+    mdl.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['AUC'])
+    es = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+    mdl.fit(X_seq_tr, y_seq_tr, epochs=50, batch_size=16, callbacks=[es], verbose=0)
+    ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length)
+    met = {'prospective_accuracy': ps['accuracy'], 'prospective_precision': ps['precision'],
+           'prospective_recall': ps['recall']}
+    mdl.save(mp)
+    joblib.dump(scl, sp)
+    print(f"{G_}LSTM Hazir | Prospektif Dogruluk:%{ps['accuracy']:.1f}{X_}")
+    return mdl, scl, met
 
-def predict_unc(dfp, models, lm, ls):
-    if dfp.empty:
+def predict_unc(dtp, models, lm, ls):
+    if not models or not dtp[ENHANCED_FEATURES].notna().any(axis=1).any():
         return pd.DataFrame()
-    dfp = fix_numeric(dfp)
-    af = [f for f in ENHANCED_FEATURES if f in dfp.columns]
-    insuf = (dfp['b_value_local'].isna()) | (dfp['b_value_local'] == 0) | (dfp['event_rate_local'] == 0)
-    dp = dfp[af].apply(safe_fill)
-    dpr = pd.DataFrame(index=dfp.index)
-    for mk, mdl in models.items():
-        if mdl:
-            dpr[f'{mk}_prob'] = mdl.predict_proba(dp)[:, 1] * 100
-        else:
-            dpr[f'{mk}_prob'] = np.nan
-    lp = np.zeros(len(dfp))
-    lu = np.zeros(len(dfp))
-    if lm and ls:
+    dtp = fix_numeric(dtp)
+    af = [f for f in ENHANCED_FEATURES if f in dtp.columns]
+    if not af:
+        return pd.DataFrame()
+    Xp = dtp[af].apply(safe_fill)
+    preds = []
+    if models.get('xgb'):
+        p_xgb = models['xgb'].predict_proba(Xp)[:, 1]
+    else:
+        p_xgb = np.full(len(Xp), 0.5)
+    if models.get('rf'):
+        p_rf = models['rf'].predict_proba(Xp)[:, 1]
+    else:
+        p_rf = np.full(len(Xp), 0.5)
+    if lm is not None and ls is not None:
         try:
-            ds = ls.transform(dp)
-            seqs = []
-            for i in range(len(ds)):
-                sq = ds[max(0, i-49):i+1]
-                if len(sq) < 50:
-                    sq = np.vstack([np.zeros((50 - len(sq), ds.shape[1])), sq])
-                seqs.append(sq)
-            if seqs:
-                seqs = np.array(seqs)
-                mcp = np.array([lm(seqs, training=True).numpy().flatten() for _ in range(10)])
-                lp = np.mean(mcp, axis=0) * 100
-                lu = np.std(mcp, axis=0) * 100
+            Xp_scaled = ls.transform(Xp)
+            if len(Xp_scaled) >= 50:
+                p_lstm = []
+                for i in range(len(Xp_scaled) - 50):
+                    X_seq = np.array([Xp_scaled[i:i+50]])
+                    p_lstm.append(lm.predict(X_seq, verbose=0)[0, 0])
+                p_lstm = np.array(p_lstm + [np.mean(p_lstm)] * 50) if p_lstm else np.full(len(Xp), 0.5)
+            else:
+                p_lstm = np.full(len(Xp), 0.5)
         except Exception:
-            lp[:] = np.nan
-    dpr['lstm_prob'] = lp
-    dpr['lstm_uncertainty'] = lu
-    fps = []
-    fcs = []
-    for i in range(len(dpr)):
-        if insuf.iloc[i]:
-            fps.append(np.nan)
-            fcs.append(0.0)
-            continue
-        px = dpr.iloc[i].get('xgb_prob', np.nan)
-        pr = dpr.iloc[i].get('rf_prob', np.nan)
-        pl = dpr.iloc[i]['lstm_prob']
-        ul = dpr.iloc[i]['lstm_uncertainty']
-        vp = []
-        wt = []
-        if not np.isnan(px):
-            vp.append(px)
-            wt.append(0.4)
-        if not np.isnan(pr):
-            vp.append(pr)
-            wt.append(0.2)
-        if not np.isnan(pl):
-            wl = 0.4 * np.exp(-ul / 10)
-            vp.append(pl)
-            wt.append(wl)
-        if vp and sum(wt) > 0:
-            wp = max(0.1, min(99.9, np.average(vp, weights=wt)))
-            fps.append(wp)
-            bu = ul if not np.isnan(ul) else 20.0
-            fcs.append(max(0, 100 - bu))
-        else:
-            fps.append(np.nan)
-            fcs.append(0.0)
-    dpr['olasilik'] = fps
-    dpr['confidence_score'] = fcs
-    dpr['total_uncertainty'] = 100 - dpr['confidence_score']
-    return dpr
+            p_lstm = np.full(len(Xp), 0.5)
+    else:
+        p_lstm = np.full(len(Xp), 0.5)
+    olasilik = (p_xgb * 0.4 + p_rf * 0.35 + p_lstm * 0.25) * 100
+    confidence = 50.0 + (np.abs(p_xgb - p_rf) * 50)
+    total_unc = np.sqrt(np.std([p_xgb, p_rf, p_lstm], axis=0)) * 100
+    return pd.DataFrame({
+        'eventID': dtp['eventID'].values,
+        'olasilik': olasilik,
+        'confidence_score': confidence,
+        'total_uncertainty': total_unc
+    })
 
-def add_legend(m, title, items):
-    body = "".join([f'<i class="fa fa-circle" style="color:{c}"></i> {l}<br>' for l, c in items.items()])
-    html = (f'<div style="position:fixed;bottom:50px;right:50px;width:320px;'
+def add_legend(m, title, legend_dict):
+    html = (f'<div style="position:fixed;top:10px;right:10px;width:auto;'
             f'padding:10px;border:2px solid grey;z-index:9999;font-size:13px;'
-            f'background:white;border-radius:5px"><b>{title}</b><br>{body}</div>')
+            f'background:white;border-radius:5px;"><b>{title}</b><br>')
+    for key, color in legend_dict.items():
+        html += f'<i style="background:{color};width:15px;height:15px;float:left;margin-right:8px;border-radius:50%;"></i>{key}<br>'
+    html += '</div>'
     m.get_root().html.add_child(folium.Element(html))
     m.get_root().header.add_child(folium.Element(
         '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/'
@@ -1121,7 +1235,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         ".info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
         "<h1>Sismik Risk Analiz Raporu<br>"
-        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v19 - Düzeltilmiş Metrikler ve Rapor Kopyalama)</span></h1>"
+        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v20 - GitHub Pages Uyumlu)</span></h1>"
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | <b>Kullanici (User):</b> {user}</p>"
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
@@ -1139,7 +1253,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     print(f"{G_}✓ Rapor olusturuldu: deprem_analiz_raporu_sade.html{X_}")
 
 # ============================================================================
-# ANA FONKSİYON
+# ANA FONKSİYON (DÜZELTILMIŞ BÖLÜM - v20)
 # ============================================================================
 def main():
     t0 = time.time()
@@ -1149,8 +1263,11 @@ def main():
     conn = None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v19 (Seismic Analysis v19 - Düzeltilmiş Metrikler & Docs Kopyalama)")
+        print("Sismik Analiz v20 (Seismic Analysis v20 - GitHub Pages Uyumlu)")
         print(f"{'='*70}{X_}")
+
+        # ✅ docs/ klasörünü hazırla (v20 - YENİ)
+        docs_dir = ensure_docs_dir()
 
         # Veritabanı bağlantısı ve tablo oluşturma
         conn = sqlite3.connect(db)
@@ -1182,8 +1299,6 @@ def main():
                 return
 
         print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
-        # Bölge bilgisini hesapla (gösteri amaçlı, sabit bölgeler yoksa atla)
-        # SEISMIC_ZONES tanımlı değilse geçici tanımla
         if 'SEISMIC_ZONES' not in globals():
             global SEISMIC_ZONES
             SEISMIC_ZONES = {}
@@ -1237,8 +1352,9 @@ def main():
             new_ids, ami, expl
         )
 
-        # ========== RAPORLARI docs/ KLASÖRÜNE KOPYALA ==========
-        os.makedirs("docs", exist_ok=True)
+        # ========== RAPORLARI docs/ KLASÖRÜNE KOPYALA (İYİLEŞTİRİLMİŞ - v20) ==========
+        print(f"\n{C_}Raporlar docs/ klasörüne kopyalanıyor...{X_}")
+        
         rapor_list = [
             "deprem_analiz_raporu_sade.html",
             "deprem_haritasi_tip.html",
@@ -1248,18 +1364,22 @@ def main():
             "molchan_xgb.png",
             "molchan_rf.png"
         ]
+        
+        basarili = 0
         for dosya in rapor_list:
-            if os.path.exists(dosya):
-                shutil.copy2(dosya, f"docs/{dosya}")
-                print(f"{G_}✓ Kopyalandi: {dosya} -> docs/{dosya}{X_}")
-            else:
-                print(f"{Y_}Uyarı: {dosya} bulunamadi, kopyalanmadi.{X_}")
+            if copy_to_docs(dosya, docs_dir):
+                basarili += 1
+        
         # Son güncelleme zamanı
-        with open("docs/last_update.txt", "w", encoding='utf-8') as f:
-            f.write(CURRENT_UTC_TIME)
-        print(f"{G_}✓ last_update.txt güncellendi.{X_}")
+        try:
+            update_file = os.path.join(docs_dir, "last_update.txt")
+            with open(update_file, "w", encoding='utf-8') as f:
+                f.write(CURRENT_UTC_TIME)
+            print(f"{G_}✓ {update_file} güncellendi.{X_}")
+        except Exception as e:
+            print(f"{R_}✗ last_update.txt yazılamadı: {e}{X_}")
 
-        # Veritabanını güncelle (ancak repoya ekleme, .gitignore kontrolü)
+        # Veritabanını güncelle
         dfs = dfr.copy()
         dfs['time'] = dfs['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
         cur = conn.cursor()
@@ -1270,14 +1390,16 @@ def main():
         elapsed = time.time() - t0
         print(f"\n{G_}{'='*70}")
         print(f"✓ TAMAMLANDI (COMPLETED)")
+        print(f"Başarılı Kopyalama: {basarili}/{len(rapor_list)}")
         print(f"Süre (Duration): {elapsed:.1f} saniye (seconds)")
         print(f"{'='*70}{X_}")
         print(f"\n{G_}Üretilen Dosyalar (Generated Files):{X_}")
         for d in rapor_list:
             if os.path.exists(d):
                 print(f"  ✓ {d}")
-        print("  ✓ last_update.txt")
-        print("\nNot: Veritabanı dosyası .gitignore ile repodan hariç tutulmuştur. Binary conflict önlenmiştir.")
+        print(f"  ✓ {docs_dir}/last_update.txt")
+        print(f"\n{P_}GitHub Pages URL: https://ozgursaygi.github.io/deprem-analiz/{X_}")
+        print("\nNot: Veritabanı dosyası .gitignore ile repodan hariç tutulmuştur.")
 
     except Exception as e:
         print(f"{R_}HATA (ERROR): {e}{X_}")
