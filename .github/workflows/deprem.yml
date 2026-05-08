@@ -2,8 +2,8 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # Her 6 saatte bir
-  workflow_dispatch:         # Manuel çalıştırma
+    - cron: '0 */12 * * *'  # Her 12 saatte bir (UTC saatine göre 00:00 ve 12:00)
+  workflow_dispatch:        # Manuel çalıştırma butonu
 
 # --- KRİTİK İZİN ---
 permissions:
