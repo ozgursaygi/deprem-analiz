@@ -36,7 +36,9 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 from sklearn.utils.class_weight import compute_class_weight
 from xgboost import XGBClassifier
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, BatchNormalization
+from tensorflow.keras.layers import (LSTM, GRU, Dense, Dropout, Input, BatchNormalization,
+                                     MultiHeadAttention, LayerNormalization, GlobalAveragePooling1D, Add)
+from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
@@ -822,6 +824,7 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     return models, metrics, {}
 
 def build_lstm(shape):
+    """LSTM model - klasik recurrent network"""
     return Sequential([
         Input(shape=shape),
         LSTM(64, return_sequences=True, dropout=0.3), BatchNormalization(),
@@ -830,6 +833,46 @@ def build_lstm(shape):
         Dense(32, activation='relu', kernel_regularizer=l2(0.01)), Dropout(0.3),
         Dense(1, activation='sigmoid')
     ])
+
+def build_gru(shape):
+    """GRU model - LSTM'den daha hızlı, benzer performans"""
+    return Sequential([
+        Input(shape=shape),
+        GRU(64, return_sequences=True, dropout=0.3), BatchNormalization(),
+        GRU(32, dropout=0.3), BatchNormalization(),
+        Dense(64, activation='relu', kernel_regularizer=l2(0.01)), Dropout(0.5),
+        Dense(32, activation='relu', kernel_regularizer=l2(0.01)), Dropout(0.3),
+        Dense(1, activation='sigmoid')
+    ])
+
+def build_transformer(shape, num_heads=4, ff_dim=64, num_blocks=2):
+    """Transformer model - attention mekanizması, deprem zaman dizisi için ideal"""
+    inputs = Input(shape=shape)
+    x = inputs
+    
+    # Transformer blokları
+    for _ in range(num_blocks):
+        # Multi-head self-attention
+        attn = MultiHeadAttention(num_heads=num_heads, key_dim=shape[-1], dropout=0.2)(x, x)
+        x_attn = Add()([x, attn])
+        x_attn = LayerNormalization(epsilon=1e-6)(x_attn)
+        
+        # Feed-forward network
+        ff = Dense(ff_dim, activation='relu', kernel_regularizer=l2(0.01))(x_attn)
+        ff = Dropout(0.3)(ff)
+        ff = Dense(shape[-1])(ff)
+        x = Add()([x_attn, ff])
+        x = LayerNormalization(epsilon=1e-6)(x)
+    
+    # Pooling ve sınıflandırma
+    x = GlobalAveragePooling1D()(x)
+    x = Dense(64, activation='relu', kernel_regularizer=l2(0.01))(x)
+    x = Dropout(0.5)(x)
+    x = Dense(32, activation='relu')(x)
+    x = Dropout(0.3)(x)
+    outputs = Dense(1, activation='sigmoid')(x)
+    
+    return Model(inputs=inputs, outputs=outputs)
 
 def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, threshold=0.5):
     """LSTM prospektif simülasyon - AUC ve Skill Score dahil tüm metrikleri döner."""
@@ -874,16 +917,31 @@ def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, th
             'auc': auc_val, 'skill_score': skill_val,
             'pos_count': int(y_true.sum()), 'total_count': len(y_true)}
 
-def train_lstm(df_full, new_ids, force=False):
+def train_sequence_model(df_full, model_type='lstm', force=False):
     """
-    BİLİMSEL DÜZELTMELER (v21):
-    1. class_weight ile sınıf dengesizliğini yönet
-    2. Gap-buffered split
-    3. AUC metriği ve F1 hesabı
+    Sequence model eğit (LSTM, GRU, Transformer)
+    Tek bir generic fonksiyon - kod tekrarı önler
     """
-    mp = 'lstm_v5.keras'
-    sp = 'lstm_scaler_v5.joblib'
+    model_files = {
+        'lstm': ('lstm_v5.keras', 'lstm_scaler_v5.joblib'),
+        'gru': ('gru_v5.keras', 'gru_scaler_v5.joblib'),
+        'transformer': ('transformer_v5.keras', 'transformer_scaler_v5.joblib')
+    }
+    builders = {
+        'lstm': build_lstm,
+        'gru': build_gru,
+        'transformer': build_transformer
+    }
+    
+    if model_type not in model_files:
+        print(f"{R_}Bilinmeyen model: {model_type}{X_}")
+        return None, None, {}
+    
+    mp, sp = model_files[model_type]
+    builder = builders[model_type]
     seq_length = 50
+    label = model_type.upper()
+    
     if not force and os.path.exists(mp) and os.path.exists(sp):
         try:
             mdl = load_model(mp)
@@ -902,7 +960,7 @@ def train_lstm(df_full, new_ids, force=False):
     ted = df_full[df_full['time'] >= gap_train_test].copy()
     
     if len(ted) < seq_length + 10:
-        print(f"{Y_}LSTM: Test seti çok küçük (gap-buffered split sonrası), atlanıyor.{X_}")
+        print(f"{Y_}{label}: Test seti çok küçük, atlanıyor.{X_}")
         return None, None, {}
     trd = fix_numeric(trd)
     ted = fix_numeric(ted)
@@ -914,8 +972,6 @@ def train_lstm(df_full, new_ids, force=False):
     scl = StandardScaler()
     X_tr = scl.fit_transform(trl[af].apply(safe_fill))
     y_tr = trl[TARGET].values
-    X_te = scl.transform(tel[af].apply(safe_fill))
-    y_te = tel[TARGET].values
     X_seq_tr, y_seq_tr = [], []
     for i in range(len(X_tr) - seq_length):
         X_seq_tr.append(X_tr[i:i+seq_length])
@@ -925,24 +981,27 @@ def train_lstm(df_full, new_ids, force=False):
     X_seq_tr = np.array(X_seq_tr)
     y_seq_tr = np.array(y_seq_tr)
     
-    # ✅ DÜZELTME: Pozitif örnek yoksa LSTM eğitilemez
     if y_seq_tr.sum() == 0:
-        print(f"{Y_}LSTM: Eğitim setinde foreshock yok, model eğitilemiyor.{X_}")
+        print(f"{Y_}{label}: Eğitim setinde foreshock yok, model eğitilemiyor.{X_}")
         return None, None, {}
     
-    # ✅ DÜZELTME: Class weight hesabı (sınıf dengesizliği için)
+    # Class weight
     n_pos = y_seq_tr.sum()
     n_neg = len(y_seq_tr) - n_pos
     class_weights = {0: 1.0, 1: float(n_neg / max(n_pos, 1))}
-    print(f"{C_}  LSTM class weights: {class_weights}{X_}")
+    print(f"{C_}  {label} eğitiliyor... (class weights: {{0: 1.0, 1: {class_weights[1]:.1f}}}){X_}")
     
-    mdl = build_lstm((seq_length, X_seq_tr.shape[2]))
-    mdl.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['AUC'])
+    mdl = builder((seq_length, X_seq_tr.shape[2]))
+    
+    # Transformer için daha düşük learning rate
+    lr = 0.0005 if model_type == 'transformer' else 0.001
+    epochs = 25 if model_type == 'transformer' else 30
+    
+    mdl.compile(optimizer=Adam(learning_rate=lr), loss='binary_crossentropy', metrics=['AUC'])
     es = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
-    mdl.fit(X_seq_tr, y_seq_tr, epochs=30, batch_size=32,
+    mdl.fit(X_seq_tr, y_seq_tr, epochs=epochs, batch_size=32,
             callbacks=[es], class_weight=class_weights, verbose=0)
     
-    # F1-optimal threshold validation gerekir, basitlik için 0.5
     ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=0.5)
     met = {
         'auc': ps.get('auc', np.nan),
@@ -960,11 +1019,27 @@ def train_lstm(df_full, new_ids, force=False):
     }
     mdl.save(mp)
     joblib.dump(scl, sp)
-    auc_disp = f"{ps.get('auc'):.3f}" if not np.isnan(ps.get('auc', np.nan)) else "N/A (tek sınıflı test)"
-    print(f"{G_}LSTM Hazir | AUC:{auc_disp} | F1:{ps.get('f1_score', 0):.3f} | Recall:{ps['recall']:.3f} | Test pos: {ps.get('pos_count', 0)}/{ps.get('total_count', 0)}{X_}")
+    auc_disp = f"{ps.get('auc'):.3f}" if not np.isnan(ps.get('auc', np.nan)) else "N/A"
+    print(f"{G_}{label} Hazir | AUC:{auc_disp} | F1:{ps.get('f1_score', 0):.3f} | Recall:{ps['recall']:.3f} | Test pos: {ps.get('pos_count', 0)}/{ps.get('total_count', 0)}{X_}")
     return mdl, scl, met
 
-def predict_unc(dtp, models, lm, ls):
+def train_lstm(df_full, new_ids, force=False):
+    """LSTM eğit (backward compatibility)"""
+    return train_sequence_model(df_full, model_type='lstm', force=force)
+
+def train_gru(df_full, force=False):
+    """GRU eğit"""
+    return train_sequence_model(df_full, model_type='gru', force=force)
+
+def train_transformer(df_full, force=False):
+    """Transformer eğit - en güçlü temporal model"""
+    return train_sequence_model(df_full, model_type='transformer', force=force)
+
+def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
+    """
+    Ensemble tahmin - LSTM, GRU, Transformer (sequence) + XGB, RF (tabular)
+    Sequence modeller daha güvenilir olduğu için ensemble'da daha yüksek ağırlık
+    """
     if not models or not dtp[ENHANCED_FEATURES].notna().any(axis=1).any():
         return pd.DataFrame()
     dtp = fix_numeric(dtp)
@@ -972,7 +1047,8 @@ def predict_unc(dtp, models, lm, ls):
     if not af:
         return pd.DataFrame()
     Xp = dtp[af].apply(safe_fill)
-    preds = []
+    
+    # Tabular modeller (XGB, RF)
     if models.get('xgb'):
         p_xgb = models['xgb'].predict_proba(Xp)[:, 1]
     else:
@@ -981,24 +1057,43 @@ def predict_unc(dtp, models, lm, ls):
         p_rf = models['rf'].predict_proba(Xp)[:, 1]
     else:
         p_rf = np.full(len(Xp), 0.5)
-    if lm is not None and ls is not None:
+    
+    # Sequence model tahmini (generic)
+    def seq_predict(model, scaler, name):
+        if model is None or scaler is None:
+            return np.full(len(Xp), 0.5)
         try:
-            Xp_scaled = ls.transform(Xp)
-            if len(Xp_scaled) >= 50:
-                p_lstm = []
-                for i in range(len(Xp_scaled) - 50):
-                    X_seq = np.array([Xp_scaled[i:i+50]])
-                    p_lstm.append(lm.predict(X_seq, verbose=0)[0, 0])
-                p_lstm = np.array(p_lstm + [np.mean(p_lstm)] * 50) if p_lstm else np.full(len(Xp), 0.5)
-            else:
-                p_lstm = np.full(len(Xp), 0.5)
-        except Exception:
-            p_lstm = np.full(len(Xp), 0.5)
-    else:
-        p_lstm = np.full(len(Xp), 0.5)
-    olasilik = (p_xgb * 0.4 + p_rf * 0.35 + p_lstm * 0.25) * 100
-    confidence = 50.0 + (np.abs(p_xgb - p_rf) * 50)
-    total_unc = np.sqrt(np.std([p_xgb, p_rf, p_lstm], axis=0)) * 100
+            Xp_scaled = scaler.transform(Xp)
+            if len(Xp_scaled) < 50:
+                return np.full(len(Xp), 0.5)
+            preds = []
+            for i in range(len(Xp_scaled) - 50):
+                X_seq = np.array([Xp_scaled[i:i+50]])
+                preds.append(model.predict(X_seq, verbose=0)[0, 0])
+            if preds:
+                return np.array(preds + [np.mean(preds)] * 50)
+            return np.full(len(Xp), 0.5)
+        except Exception as e:
+            print(f"{Y_}{name} predict error: {e}{X_}")
+            return np.full(len(Xp), 0.5)
+    
+    p_lstm = seq_predict(lm, ls, 'LSTM')
+    p_gru = seq_predict(gm, gs, 'GRU')
+    p_transformer = seq_predict(tm, ts, 'Transformer')
+    
+    # ✅ ENSEMBLE: Sequence modellerine daha fazla ağırlık ver
+    # Tabular: XGB(0.15) + RF(0.15) = 0.30
+    # Sequence: LSTM(0.20) + GRU(0.20) + Transformer(0.30) = 0.70
+    olasilik = (p_xgb * 0.15 + p_rf * 0.15 +
+                p_lstm * 0.20 + p_gru * 0.20 +
+                p_transformer * 0.30) * 100
+    
+    # Güven skoru: tüm modellerin uyumu
+    all_preds = np.array([p_xgb, p_rf, p_lstm, p_gru, p_transformer])
+    confidence = 100.0 - (np.std(all_preds, axis=0) * 100)
+    confidence = np.clip(confidence, 0, 100)
+    total_unc = np.std(all_preds, axis=0) * 100
+    
     return pd.DataFrame({
         'eventID': dtp['eventID'].values,
         'olasilik': olasilik,
@@ -1127,7 +1222,10 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
             return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
         try:
             val = float(v)
+            # ✅ DÜZELTME: 20+ kırmızı bold, 50+ daha koyu kırmızı
             if val >= 50.00:
+                return f'<span style="color:#b71c1c;font-weight:bold;font-size:1.05em">{val:.2f} ⚠</span>'
+            elif val >= 20.00:
                 return f'<span style="color:red;font-weight:bold">{val:.2f}</span>'
             return f"{val:.2f}"
         except Exception:
@@ -1333,10 +1431,17 @@ def main():
 
         models, metrics, expl = train_sklearn_improved(df, new_ids, force=force)
         lm, ls, lmet = train_lstm(df, new_ids, force=force)
+        # YENİ: GRU ve Transformer modelleri (deprem zaman serisi için daha uygun)
+        gm, gs, gmet = train_gru(df, force=force)
+        tm, ts, tmet = train_transformer(df, force=force)
 
         ami = {**metrics}
         if lmet:
             ami['lstm'] = lmet
+        if gmet:
+            ami['gru'] = gmet
+        if tmet:
+            ami['transformer'] = tmet
 
         dfr = df.copy()
         t7 = pd.to_datetime(datetime.utcnow(), utc=True) - timedelta(days=7)
@@ -1344,7 +1449,7 @@ def main():
         aids = set(new_ids) | set(dfr[rm]['eventID'])
         if aids:
             dtp = dfr[dfr['eventID'].isin(aids)].copy()
-            preds = predict_unc(dtp, models, lm, ls)
+            preds = predict_unc(dtp, models, lm, ls, gm, gs, tm, ts)
             if not preds.empty:
                 preds['eventID'] = dtp['eventID'].values
                 dfr = pd.merge(dfr, preds, on='eventID', how='left', suffixes=('', '_new'))
