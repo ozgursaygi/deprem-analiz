@@ -2,16 +2,16 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *'  # Her 6 saatte bir
-  workflow_dispatch:  # Manuel tetikleme
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Release oluşturma ve içerik güncelleme için gerekli
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Maksimum 30 dakika
+    timeout-minutes: 30
     
     steps:
     - name: Checkout Repository
