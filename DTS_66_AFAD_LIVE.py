@@ -1042,10 +1042,12 @@ def train_sequence_model(df_full, model_type='lstm', force=False):
         prec, rec, ths = precision_recall_curve(y_seq_tr, train_proba)
         f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
         best_th = float(ths[np.argmax(f1_scores[:-1])]) if len(ths) > 0 else 0.5
-        # Aşırı düşük threshold'ları engelle (overfit göstergesi)
-        best_th = max(0.05, min(0.7, best_th))
+        # ✅ DÜZELTME: Threshold üst sınırını 0.45'e düşür (LSTM Recall=0 sorunu için)
+        # Yüksek threshold (>0.5) → Recall=0 sorunu yaratır
+        # Düşük clip (0.05) overfit önler
+        best_th = max(0.05, min(0.45, best_th))
     else:
-        best_th = 0.5
+        best_th = 0.3  # ✅ Default threshold de düşürüldü (eskiden 0.5)
     print(f"{C_}  {label} optimum eşik: {best_th:.3f}{X_}")
     
     ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=best_th)
@@ -1263,21 +1265,37 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     gc = 'Guven Skoru (Confidence Score)'
 
     def fp(row):
+        # ✅ ARTÇI FİLTRESİ: Artçı depremler için olasılık gösterme (mantıksız)
+        et = row.get('Deprem Tipi (Earthquake Type)', '')
+        if 'Artci Deprem' in str(et) or 'Aftershock' in str(et):
+            return '<span style="color:#1976D2;font-style:italic">- (Artçı / Aftershock)</span>'
+        
         v = row[pc]
         if pd.isna(v) or v == "":
             return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
         try:
             val = float(v)
-            # ✅ DÜZELTME: 20+ kırmızı bold, 50+ daha koyu kırmızı
+            # ✅ YENİ RENK EŞİKLERİ (Bilimsel)
+            # %50+ → Koyu kırmızı + uyarı (Yüksek risk)
+            # %25-50 → Kırmızı bold (Orta-Yüksek risk)
+            # %10-25 → Turuncu (Dikkat)
+            # < %10 → Normal
             if val >= 50.00:
                 return f'<span style="color:#b71c1c;font-weight:bold;font-size:1.05em">{val:.2f} ⚠</span>'
-            elif val >= 20.00:
+            elif val >= 25.00:
                 return f'<span style="color:red;font-weight:bold">{val:.2f}</span>'
+            elif val >= 10.00:
+                return f'<span style="color:#f57c00">{val:.2f}</span>'
             return f"{val:.2f}"
         except Exception:
             return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
 
     def fc(row):
+        # ✅ ARTÇI FİLTRESİ: Artçılar için güven skoru gösterme
+        et = row.get('Deprem Tipi (Earthquake Type)', '')
+        if 'Artci Deprem' in str(et) or 'Aftershock' in str(et):
+            return "-"
+        
         if pd.isna(row[pc]) or row[pc] == "":
             return "-"
         try:
@@ -1358,6 +1376,12 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması - en önemli metrik (Harmonic mean - most important metric)<br>"
                 "• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık (How many actual foreshocks we caught)<br>"
                 "• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek (How many of our predictions are correct)<br>"
+                "<br><b>🎨 Olasılık Renk Kodları (Probability Color Codes):</b><br>"
+                "• <span style='color:#b71c1c;font-weight:bold'>≥ %50: Yüksek Risk (High Risk) ⚠</span><br>"
+                "• <span style='color:red;font-weight:bold'>%25-50: Orta-Yüksek Risk (Medium-High Risk)</span><br>"
+                "• <span style='color:#f57c00'>%10-25: Dikkat (Caution)</span><br>"
+                "• Normal: &lt; %10<br>"
+                "• <span style='color:#1976D2;font-style:italic'>Artçı (Aftershock):</span> Olasılık gösterilmez (mantıksız)<br>"
                 "</div>"
                 "<p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür "
                 "(If insufficient foreshock examples in test set, some metrics show 'N/A'). "
