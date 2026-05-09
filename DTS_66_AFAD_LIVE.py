@@ -836,8 +836,10 @@ def build_lstm(shape):
     ])
 
 def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, threshold=0.5):
+    """LSTM prospektif simülasyon - AUC ve Skill Score dahil tüm metrikleri döner."""
     if df_test.empty or len(df_test) <= seq_length:
-        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0}
+        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0,
+                'auc': np.nan, 'skill_score': np.nan, 'f1_score': 0.0}
     df_test = df_test.sort_values('time').reset_index(drop=True)
     X = df_test[feature_cols].apply(safe_fill).values
     X_scaled = scaler.transform(X)
@@ -847,7 +849,8 @@ def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, th
         X_seq.append(X_scaled[i:i+seq_length])
         y_true.append(df_test.iloc[i+seq_length][TARGET])
     if not X_seq:
-        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0}
+        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0,
+                'auc': np.nan, 'skill_score': np.nan, 'f1_score': 0.0}
     X_seq = np.array(X_seq)
     y_true = np.array(y_true)
     y_pred_proba = model.predict(X_seq, verbose=0).flatten()
@@ -855,7 +858,25 @@ def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, th
     acc = (y_pred == y_true).mean() * 100
     p = precision_score(y_true, y_pred, zero_division=0)
     r = recall_score(y_true, y_pred, zero_division=0)
-    return {'accuracy': acc, 'precision': p, 'recall': r}
+    f1 = 2 * p * r / (p + r + 1e-9)
+    
+    # ✅ DÜZELTME: AUC ve Skill Score hesabı
+    auc_val = np.nan
+    skill_val = np.nan
+    if len(np.unique(y_true)) >= 2:
+        try:
+            auc_val = roc_auc_score(y_true, y_pred_proba)
+            mcd = calc_molchan(y_true, y_pred_proba)
+            skill_val = mcd['skill_score']
+        except Exception:
+            pass
+    else:
+        # Test seti tek sınıflıysa, train üzerinde değerlendir
+        print(f"{Y_}  LSTM: Test seti tek sınıf içeriyor ({y_true.sum()} pozitif). AUC hesaplanamadı.{X_}")
+    
+    return {'accuracy': acc, 'precision': p, 'recall': r, 'f1_score': f1,
+            'auc': auc_val, 'skill_score': skill_val,
+            'pos_count': int(y_true.sum()), 'total_count': len(y_true)}
 
 def train_lstm(df_full, new_ids, force=False):
     """
@@ -927,13 +948,24 @@ def train_lstm(df_full, new_ids, force=False):
     
     # F1-optimal threshold validation gerekir, basitlik için 0.5
     ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=0.5)
-    met = {'prospective_accuracy': ps['accuracy'],
-           'prospective_precision': ps['precision'],
-           'prospective_recall': ps['recall'],
-           'prospective_f1': 2*ps['precision']*ps['recall']/(ps['precision']+ps['recall']+1e-9)}
+    met = {
+        'auc': ps.get('auc', np.nan),
+        'molchan_skill': ps.get('skill_score', np.nan),
+        'f1_score': ps.get('f1_score', 0.0),
+        'precision': ps.get('precision', 0.0),
+        'recall': ps.get('recall', 0.0),
+        'optimal_threshold': 0.5,
+        'prospective_accuracy': ps['accuracy'],
+        'prospective_precision': ps['precision'],
+        'prospective_recall': ps['recall'],
+        'prospective_f1': ps.get('f1_score', 0.0),
+        'pos_count_test': ps.get('pos_count', 0),
+        'total_count_test': ps.get('total_count', 0)
+    }
     mdl.save(mp)
     joblib.dump(scl, sp)
-    print(f"{G_}LSTM Hazir | Acc:%{ps['accuracy']:.1f} | Precision:{ps['precision']:.3f} | Recall:{ps['recall']:.3f} | F1:{met['prospective_f1']:.3f}{X_}")
+    auc_disp = f"{ps.get('auc'):.3f}" if not np.isnan(ps.get('auc', np.nan)) else "N/A (tek sınıflı test)"
+    print(f"{G_}LSTM Hazir | AUC:{auc_disp} | F1:{ps.get('f1_score', 0):.3f} | Recall:{ps['recall']:.3f} | Test pos: {ps.get('pos_count', 0)}/{ps.get('total_count', 0)}{X_}")
     return mdl, scl, met
 
 def predict_unc(dtp, models, lm, ls):
