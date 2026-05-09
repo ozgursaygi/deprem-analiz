@@ -77,9 +77,124 @@ ENHANCED_FEATURES = [
     'mag', 'depth', 'b_value_local', 'event_rate_local', 'time_since_last',
     'mag_completeness', 'spatial_density', 'temporal_clustering',
     'mag_trend', 'depth_clustering', 'energy_rate', 'swarm_indicator',
-    'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index'
+    'fault_distance', 'event_rate_24h', 'event_rate_12h', 'spatial_decay_index',
+    # ✅ YENİ: ETAS parametreleri
+    'etas_omori_p', 'etas_background_rate', 'etas_residual'
 ]
 TARGET = 'is_foreshock'
+
+# ============================================================================
+# SİSMİK BÖLGE TANIMLARI (Türkiye Fay Zonları)
+# ============================================================================
+SEISMIC_ZONES = {
+    'Kuzey Anadolu Fay Zonu (NAFZ)': {
+        'polygon': [(40.0, 26.0), (41.5, 30.0), (41.0, 36.0), (40.5, 40.0), (40.0, 44.0),
+                     (39.5, 44.0), (39.5, 40.0), (39.5, 36.0), (40.0, 30.0), (39.0, 26.0)],
+        'lat_range': (39.0, 41.5), 'lon_range': (26.0, 44.0)
+    },
+    'Dogu Anadolu Fay Zonu (EAFZ)': {
+        'polygon': [(39.5, 36.0), (38.5, 38.0), (37.5, 40.0), (37.0, 41.0),
+                     (36.5, 41.0), (37.0, 40.0), (38.0, 38.0), (39.0, 36.0)],
+        'lat_range': (36.5, 39.5), 'lon_range': (36.0, 41.0)
+    },
+    'Ege Graben Sistemi (Aegean)': {
+        'lat_range': (36.5, 39.5), 'lon_range': (25.0, 30.0)
+    },
+    'Akdeniz (Mediterranean)': {
+        'lat_range': (34.0, 37.0), 'lon_range': (28.0, 36.0)
+    },
+    'Bati Anadolu (Western Anatolia)': {
+        'lat_range': (37.0, 40.0), 'lon_range': (26.0, 32.0)
+    },
+    'Guneydogu Anadolu (SE Anatolia)': {
+        'lat_range': (36.0, 38.5), 'lon_range': (38.0, 45.0)
+    }
+}
+
+def detect_seismic_zone(lat, lon):
+    """Deprem koordinatlarına göre sismik bölge belirle."""
+    if pd.isna(lat) or pd.isna(lon):
+        return "Bilinmeyen (Unknown)"
+    for zone_name, zone_def in SEISMIC_ZONES.items():
+        lat_min, lat_max = zone_def['lat_range']
+        lon_min, lon_max = zone_def['lon_range']
+        if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+            return zone_name
+    return "Diger Bolge (Other Region)"
+
+def calc_regional_metrics(df, models, feature_cols):
+    """
+    Bölgesel Performans Analizi: Her sismik bölge için ayrı AUC, F1, Recall hesapla.
+    """
+    results = {}
+    if not models or TARGET not in df.columns:
+        return results
+    
+    for zone_name in df['seismic_zone'].unique():
+        zone_df = df[df['seismic_zone'] == zone_name].copy()
+        if len(zone_df) < 20 or zone_df[TARGET].sum() == 0:
+            results[zone_name] = {
+                'count': len(zone_df),
+                'foreshock_count': int(zone_df[TARGET].sum()),
+                'auc': np.nan, 'f1': np.nan, 'recall': np.nan,
+                'status': 'Yetersiz Veri (Insufficient Data)'
+            }
+            continue
+        
+        af = [f for f in feature_cols if f in zone_df.columns]
+        if not af:
+            continue
+        
+        X_zone = zone_df[af].apply(safe_fill)
+        y_zone = zone_df[TARGET]
+        
+        best_auc = np.nan
+        best_f1 = np.nan
+        best_recall = np.nan
+        best_model = ""
+        
+        for mtype, model in models.items():
+            if model is None:
+                continue
+            try:
+                ypr = model.predict_proba(X_zone)[:, 1]
+                yp = (ypr >= 0.05).astype(int)
+                
+                if len(np.unique(y_zone)) >= 2:
+                    auc = roc_auc_score(y_zone, ypr)
+                    f1 = f1_score(y_zone, yp, zero_division=0)
+                    rec = recall_score(y_zone, yp, zero_division=0)
+                    
+                    if np.isnan(best_auc) or auc > best_auc:
+                        best_auc = auc
+                        best_f1 = f1
+                        best_recall = rec
+                        best_model = mtype.upper()
+            except Exception:
+                continue
+        
+        # Bölge güvenilirlik durumu
+        if not np.isnan(best_auc):
+            if best_auc >= 0.65:
+                status = "Güvenilir (Reliable) ✓"
+            elif best_auc >= 0.55:
+                status = "Orta (Moderate)"
+            else:
+                status = "Güvenilmez (Unreliable) ⚠"
+        else:
+            status = "Hesaplanamadı (N/A)"
+        
+        results[zone_name] = {
+            'count': len(zone_df),
+            'foreshock_count': int(zone_df[TARGET].sum()),
+            'auc': best_auc,
+            'f1': best_f1,
+            'recall': best_recall,
+            'best_model': best_model,
+            'status': status
+        }
+    
+    return results
 
 # ============================================================================
 # YENİ FONKSIYON: docs/ KLASÖRÜ YÖNETİMİ (v20)
@@ -455,6 +570,42 @@ def calc_features(df_all):
             except Exception:
                 pass
         bv = calc_b_value(le['mag'].values)
+        
+        # ✅ YENİ: ETAS parametreleri hesapla
+        etas_omori_p = np.nan
+        etas_background_rate = np.nan
+        etas_residual = np.nan
+        
+        if len(re) >= 5:
+            # Omori p-değeri: artçı bozunma hızı
+            # N(t) ∝ (t + c)^(-p) → p büyükse artçılar hızlı azalır
+            try:
+                time_diffs = np.array([(ct - t).total_seconds() / 86400.0 for t in re['time']])
+                time_diffs = time_diffs[time_diffs > 0]
+                if len(time_diffs) >= 3:
+                    log_t = np.log10(time_diffs + 0.01)
+                    counts = np.arange(len(log_t), 0, -1)
+                    log_n = np.log10(counts + 1)
+                    if len(log_t) >= 2:
+                        slope = np.polyfit(log_t, log_n, 1)[0]
+                        etas_omori_p = -slope  # Negatif eğim = p değeri
+                        etas_omori_p = max(0.1, min(3.0, etas_omori_p))  # Clip
+            except Exception:
+                pass
+            
+            # Arka plan oranı (background rate): Bölgenin doğal deprem hızı
+            # Son 365 gün içinde kaç deprem / gün
+            t365 = ct - timedelta(days=365)
+            yearly_events = le[le['time'] >= t365]
+            etas_background_rate = len(yearly_events) / 365.0
+            
+            # ETAS Residual: Gerçek oran / beklenen oran
+            # Residual > 1 = beklenenden FAZLA deprem (potansiyel foreshock sinyali!)
+            if etas_background_rate > 0:
+                etas_residual = er / max(etas_background_rate, 0.001)
+            else:
+                etas_residual = er * 10 if er > 0 else 0
+        
         ups.append({
             'eventID': eid,
             'b_value_local': bv,
@@ -470,7 +621,11 @@ def calc_features(df_all):
             'energy_rate': np.sum(10**(le['mag'].values * 1.5)) if len(le) > 0 else 0,
             'swarm_indicator': 1 if er > 5 and len(le) > 10 else 0,
             'fault_distance': np.nan,
-            'spatial_decay_index': decay_idx
+            'spatial_decay_index': decay_idx,
+            # ✅ YENİ: ETAS parametreleri
+            'etas_omori_p': etas_omori_p,
+            'etas_background_rate': etas_background_rate,
+            'etas_residual': etas_residual
         })
     if ups:
         upd = pd.DataFrame(ups)
@@ -478,7 +633,8 @@ def calc_features(df_all):
         for col in ['b_value_local', 'event_rate_local', 'time_since_last', 'mag_completeness',
                     'spatial_density', 'temporal_clustering', 'mag_trend', 'depth_clustering',
                     'energy_rate', 'swarm_indicator', 'fault_distance', 'event_rate_24h',
-                    'event_rate_12h', 'spatial_decay_index']:
+                    'event_rate_12h', 'spatial_decay_index',
+                    'etas_omori_p', 'etas_background_rate', 'etas_residual']:
             nc = f'{col}_new'
             if nc in df.columns:
                 df[col] = df[nc].fillna(df[col])
@@ -1355,7 +1511,7 @@ def map_by_prob(dfr, fn="deprem_haritasi_olasilik.html"):
     add_no_cache(m)
     m.save(fn)
 
-def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
+def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl, regional_metrics=None):
     recent = dfr.sort_values('time', ascending=False).head(2000)
     filt = recent[recent['mag'] >= 4.0].copy()
     filt['time'] = pd.to_datetime(filt['time']).dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -1525,6 +1681,49 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "📈 <a href='calibration_curve.png' target='_blank'>Kalibrasyon Eğrisi Grafiği (Calibration Curve Chart)</a></p>"
             )
 
+    # ✅ YENİ: Bölgesel performans tablosu
+    regional_html = ""
+    if regional_metrics:
+        reg_rows = ""
+        for zone, rm in sorted(regional_metrics.items(), key=lambda x: x[1].get('auc', 0) if not np.isnan(x[1].get('auc', 0)) else -1, reverse=True):
+            auc_val = rm.get('auc', np.nan)
+            if not np.isnan(auc_val):
+                if auc_val >= 0.65:
+                    auc_str = f"<span style='color:#2e7d32;font-weight:bold'>{auc_val:.3f} ✓</span>"
+                elif auc_val >= 0.55:
+                    auc_str = f"<span style='color:#f57c00'>{auc_val:.3f}</span>"
+                else:
+                    auc_str = f"<span style='color:#d32f2f'>{auc_val:.3f} ⚠</span>"
+            else:
+                auc_str = "N/A"
+            
+            status = rm.get('status', 'N/A')
+            if '✓' in status:
+                status_str = f"<span style='color:#2e7d32;font-weight:bold'>{status}</span>"
+            elif '⚠' in status:
+                status_str = f"<span style='color:#d32f2f'>{status}</span>"
+            else:
+                status_str = f"<span style='color:#f57c00'>{status}</span>"
+            
+            reg_rows += (f"<tr><td>{zone}</td>"
+                         f"<td>{rm['count']}</td>"
+                         f"<td>{rm['foreshock_count']}</td>"
+                         f"<td>{auc_str}</td>"
+                         f"<td>{status_str}</td></tr>")
+        
+        regional_html = (
+            "<h3>Bölgesel Performans Analizi (Regional Performance Analysis)</h3>"
+            "<p style='font-size:.9em;color:#666'>Her sismik bölge için ayrı model performansı "
+            "(Separate model performance for each seismic zone). "
+            "AUC ≥ 0.65 = Güvenilir (Reliable) ✓, AUC 0.55-0.65 = Orta (Moderate), AUC &lt; 0.55 = Güvenilmez (Unreliable) ⚠</p>"
+            "<table style='width:100%;border-collapse:collapse'>"
+            "<tr><th>Bölge (Zone)</th><th>Deprem Sayısı (Count)</th>"
+            "<th>Foreshock Sayısı</th><th>En İyi AUC (Best AUC)</th>"
+            "<th>Güvenilirlik (Reliability)</th></tr>"
+            + reg_rows +
+            "</table>"
+        )
+
     tbl = rt.to_html(index=False, escape=False)
     html = (
         "<!DOCTYPE html><html lang='tr'><head>"
@@ -1554,6 +1753,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         f"Bu parametreler model eğitiminden bağımsızdır (model-independent). "
         f"<b>Dikkat (Warning):</b> Gelecek ana şok bilgisi kullanılır (future mainshock info used - future leakage)</div>"
         f"{perf}"
+        f"{regional_html}"
         "<h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3>"
         f"{tbl}"
         "</body></html>"
@@ -1726,18 +1926,12 @@ def main():
                 print(f"{R_}Yetersiz veri (Insufficient data).{X_}")
                 return
 
-        print(f"{C_}Depremlerin bulundugu bolge belirleniyor...{X_}")
-        if 'SEISMIC_ZONES' not in globals():
-            global SEISMIC_ZONES
-            SEISMIC_ZONES = {}
-        if 'detect_seismic_zone' not in globals():
-            def detect_seismic_zone(lat, lon):
-                return "Unknown"
+        print(f"{C_}Depremlerin bulundugu bolge belirleniyor (Detecting seismic zones)...{X_}")
         df['seismic_zone'] = df.apply(lambda row: detect_seismic_zone(row['latitude'], row['longitude']), axis=1)
         zone_counts = df['seismic_zone'].value_counts()
-        print(f"{G_}Bolge Dagilimi:{X_}")
+        print(f"{G_}Bolge Dagilimi (Zone Distribution):{X_}")
         for zone, count in zone_counts.items():
-            print(f"  {zone}: {count} olay")
+            print(f"  {zone}: {count} olay (events)")
 
         df = calc_features(df)
         df = classify_eq_type(df)
@@ -1776,6 +1970,14 @@ def main():
         map_by_type(dfr)
         map_by_prob(dfr)
 
+        # ✅ YENİ: Bölgesel performans analizi
+        print(f"\n{C_}Bölgesel performans analizi yapılıyor (Regional performance analysis)...{X_}")
+        af = [f for f in ENHANCED_FEATURES if f in dfr.columns]
+        regional_metrics = calc_regional_metrics(dfr, models, af)
+        for zone, rm in regional_metrics.items():
+            auc_str = f"{rm['auc']:.3f}" if not np.isnan(rm.get('auc', np.nan)) else "N/A"
+            print(f"  {zone}: AUC={auc_str} | {rm['count']} olay | {rm['foreshock_count']} foreshock | {rm['status']}")
+
         # Raporu oluştur (Generate report)
         gen_report(
             dfr, CURRENT_USER, CURRENT_UTC_TIME,
@@ -1783,7 +1985,7 @@ def main():
             f"Sabit oncu deprem tanimi (modelden bağımsız) kullanilmistir "
             f"(Fixed foreshock definition - model independent). "
             f"Düzeltilmiş metrik hesaplama (Corrected metric calculation - NaN handled).",
-            new_ids, ami, expl
+            new_ids, ami, expl, regional_metrics
         )
 
         # ========== RAPORLARI docs/ KLASÖRÜNE KOPYALA (İYİLEŞTİRİLMİŞ - v20) ==========
