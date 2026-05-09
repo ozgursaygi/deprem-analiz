@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Sismik Risk Analiz Sistemi - v21 (BİLİMSEL DÜZELTMELER)
+Risk Analiz Sistemi (Risk Analysis System) - v21
 
-v21 KRİTİK DÜZELTMELER:
+v21 KRİTİK DÜZELTMELER (CRITICAL FIXES):
 1. Gap-buffered train/validation/test split (60 gün buffer foreshock leakage'ı önler)
 2. Threshold optimizasyonu validation setinde (test set leakage'ı önler)
-3. LSTM class_weight ile sınıf dengesizliği yönetimi
+3. LSTM class_weight ile sınıf dengesizliği (class imbalance) yönetimi
 4. F1, Precision, Recall metrikleri ön planda (Accuracy yanıltıcı imbalanced data'da)
-5. Olumsuz Skill Score için belirgin uyarılar
-6. Doğru bilimsel yorumlama notları raporda
-
-v20'den kalan iyileştirmeler:
-- docs/ klasörü yönetimi
-- GitHub Pages uyumluluğu
+5. Olumsuz Skill Score için belirgin uyarılar (warnings)
+6. Doğru yorumlama notları raporda (interpretation notes)
 """
 
 import pandas as pd
@@ -534,14 +530,14 @@ def create_labels_parametric(df, mag_threshold=None, tw_days=None, r_km=None, ve
     df[TARGET] = labels
     pos_rate = (labels.sum() / len(labels)) * 100 if len(labels) > 0 else 0
     if verbose:
-        print(f"{G_}Foreshock (Sabit Bilimsel Parametreler): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
+        print(f"{G_}Foreshock (Sabit Parametreler / Fixed Parameters): %{pos_rate:.2f} ({labels.sum()}/{len(labels)}){X_}")
         print(f"{G_}  Parametreler: Mag>={mag_threshold}, Time<={tw_days}d, Dist<={r_km}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}{X_}")
         print(f"{Y_}  UYARI: Gelecek ana şok bilgisi kullaniliyor (future leakage).{X_}")
     return df
 
 def sensitivity_analysis_foreshock(df):
     print(f"\n{C_}{'='*70}")
-    print("SENSITIVITY ANALYSIS: Foreshock Parametreleri (Modelden Bağımsız)")
+    print("SENSITIVITY ANALYSIS: Foreshock Parametreleri (Foreshock Parameters - Model Independent)")
     print(f"{'='*70}{X_}\n")
     mag_thresholds = [5.0, 5.3, 5.5, 5.8, 6.0]
     time_windows = [7, 14, 30, 45, 60]
@@ -582,7 +578,7 @@ def sensitivity_analysis_foreshock(df):
     print(f"  Std Dev: {sens_df['positive_rate_%'].std():.2f}%")
     print(f"  Min: {sens_df['positive_rate_%'].min():.2f}%")
     print(f"  Max: {sens_df['positive_rate_%'].max():.2f}%")
-    print(f"\n{G_}Referans (Sabit Bilimsel) Parametreler:{X_}")
+    print(f"\n{G_}Referans (Sabit / Fixed) Parametreler:{X_}")
     ref_row = sens_df[
         (sens_df['mag_threshold'] == FORESHOCK_MAG_THRESHOLD) &
         (sens_df['time_window_days'] == FORESHOCK_TIME_WINDOW_DAYS) &
@@ -617,7 +613,7 @@ def sensitivity_analysis_foreshock(df):
         axes[2].grid(alpha=0.3)
         axes[2].axvline(x=FORESHOCK_SPATIAL_RADIUS_KM, color='g', linestyle='--', alpha=0.7, label=f'Sabit: {FORESHOCK_SPATIAL_RADIUS_KM}km')
         axes[2].legend()
-        plt.suptitle('Foreshock Definition - Sensitivity Analysis (Modelden Bağımsız)', fontsize=14, fontweight='bold', y=1.02)
+        plt.suptitle('Foreshock Definition - Sensitivity Analysis (Model Independent)', fontsize=14, fontweight='bold', y=1.02)
         plt.tight_layout()
         plt.savefig('sensitivity_analysis.png', dpi=150, bbox_inches='tight')
         print(f"\n{G_}✓ Sensitivity analizi grafiği kaydedildi: sensitivity_analysis.png{X_}")
@@ -722,7 +718,7 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     vad = df_full[(df_full['time'] >= gap_train_val) & (df_full['time'] <= cutoff_val)].copy()
     ted = df_full[df_full['time'] >= gap_val_test].copy()
     
-    print(f"{C_}Bilimsel zamansal ayrım (gap-buffered):{X_}")
+    print(f"{C_}Zamansal ayrım (Time-based split / gap-buffered):{X_}")
     print(f"  Train: {len(trd)} olay (≤{cutoff_train.strftime('%Y-%m-%d')})")
     print(f"  Validation: {len(vad)} olay")
     print(f"  Test: {len(ted)} olay (≥{gap_val_test.strftime('%Y-%m-%d')})")
@@ -739,7 +735,7 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     trd = fix_numeric(trd)
     vad = fix_numeric(vad)
     ted = fix_numeric(ted)
-    print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
+    print(f"{C_}Sabit parametrelerle (fixed parameters) foreshock etiketlemesi yapiliyor...{X_}")
     # ÖNEMLI: Her set'in etiketlemesi KENDİ İÇİNDE yapılır - leakage yok
     trl = create_labels_parametric(trd.copy(), verbose=True)
     val = create_labels_parametric(vad.copy(), verbose=False)
@@ -1209,29 +1205,31 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
             perf = (
                 "<h3>Model Performans Metrikleri (Model Performance Metrics)</h3>"
                 "<div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'>"
-                "<b>📊 Bilimsel Yorum (Scientific Interpretation):</b><br>"
-                "• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü ⚠ — kullanılmamalı<br>"
-                "• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü<br>"
-                "• <b>AUC 0.6-0.7:</b> Orta düzey (deprem tahmininde gerçekçi)<br>"
-                "• <b>AUC ≥ 0.7:</b> İyi performans ✓<br>"
-                "• <b>Skill Score &lt; 0:</b> Rastgeleden kötü ⚠<br>"
-                "• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması (en önemli metrik)<br>"
-                "• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık<br>"
-                "• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek<br>"
+                "<b>📊 Yorum (Interpretation):</b><br>"
+                "• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü (Worse than random) ⚠ — kullanılmamalı (do not use)<br>"
+                "• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü (Weak discrimination)<br>"
+                "• <b>AUC 0.6-0.7:</b> Orta düzey - deprem tahmininde gerçekçi (Moderate - realistic for earthquake prediction)<br>"
+                "• <b>AUC ≥ 0.7:</b> İyi performans (Good performance) ✓<br>"
+                "• <b>Skill Score &lt; 0:</b> Rastgeleden kötü (Worse than random) ⚠<br>"
+                "• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması - en önemli metrik (Harmonic mean - most important metric)<br>"
+                "• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık (How many actual foreshocks we caught)<br>"
+                "• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek (How many of our predictions are correct)<br>"
                 "</div>"
-                "<p style='color:#d32f2f'><b>Not:</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür. "
-                "Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur.</p>"
+                "<p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür "
+                "(If insufficient foreshock examples in test set, some metrics show 'N/A'). "
+                "Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur "
+                "(Optimal threshold found by maximizing F1 on validation set).</p>"
                 "<table style='width:100%;border-collapse:collapse'>"
                 "<tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th>"
                 "<th>Molchan Skill</th><th>Eşik (Threshold)</th></tr>"
                 + rows +
                 "</table>"
                 "<p style='font-size:.9em;color:#666;margin-top:10px'>"
-                "<b>Bilimsel Notlar:</b><br>"
-                "• Train/Validation/Test ayrımı zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme).<br>"
-                "• Threshold validation setinde optimize edildi — test setine bakılmadı.<br>"
-                "• Sınıf dengesizliği için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>"
-                "• <b>Dikkat:</b> Deprem öncü tahmini bilimde çözülmemiş bir problemdir. Gerçek dünyada AUC 0.6-0.7 makul kabul edilir.</p>"
+                "<b>Notlar (Notes):</b><br>"
+                "• Train/Validation/Test ayrımı (split) zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme / leakage prevention).<br>"
+                "• Threshold validation setinde optimize edildi (optimized) — test setine bakılmadı (not seen).<br>"
+                "• Sınıf dengesizliği (class imbalance) için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>"
+                "• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).</p>"
             )
 
     tbl = rt.to_html(index=False, escape=False)
@@ -1241,7 +1239,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "<meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'>"
         "<meta http-equiv='Pragma' content='no-cache'>"
         "<meta http-equiv='Expires' content='0'>"
-        "<title>Sismik Risk Raporu (Seismic Risk Report)</title>"
+        "<title>Risk Analiz Raporu (Risk Analysis Report)</title>"
         "<style>"
         "body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}"
         "h1{color:#2c3e50}"
@@ -1252,15 +1250,16 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         "tr:hover{background:#f1f1f1}"
         ".info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
-        "<h1>Sismik Risk Analiz Raporu<br>"
-        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Scientific v21 - Düzeltilmiş Bilimsel Metrikler)</span></h1>"
+        "<h1>Risk Analiz Raporu (Risk Analysis Report)<br>"
+        "<span style='font-size:0.7em;color:#555'>v21 - Düzeltilmiş Metrikler (Corrected Metrics)</span></h1>"
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | <b>Kullanici (User):</b> {user}</p>"
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
         f"<b>Deprem Oncu Tanimi (Foreshock Definition):</b> "
-        f"Sabit bilimsel parametreler (Mag>={FORESHOCK_MAG_THRESHOLD}, Time<={FORESHOCK_TIME_WINDOW_DAYS}gün, "
+        f"Sabit parametreler / Fixed parameters (Mag>={FORESHOCK_MAG_THRESHOLD}, Time<={FORESHOCK_TIME_WINDOW_DAYS}gün/days, "
         f"Dist<={FORESHOCK_SPATIAL_RADIUS_KM}km, ΔM>={FORESHOCK_MIN_MAG_DIFF}). "
-        f"Bu parametreler model eğitiminden bağımsızdır ve değiştirilmez. (Dikkat: Gelecek ana şok bilgisi kullanılır - future leakage)</div>"
+        f"Bu parametreler model eğitiminden bağımsızdır (model-independent). "
+        f"<b>Dikkat (Warning):</b> Gelecek ana şok bilgisi kullanılır (future mainshock info used - future leakage)</div>"
         f"{perf}"
         "<h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3>"
         f"{tbl}"
@@ -1281,7 +1280,7 @@ def main():
     conn = None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v21 (Scientific - Düzeltilmiş Bilimsel Metrikler)")
+        print("Analiz v21 (Analysis v21 - Düzeltilmiş Metrikler / Corrected Metrics)")
         print(f"{'='*70}{X_}")
 
         # ✅ docs/ klasörünü hazırla (v20 - YENİ)
@@ -1359,14 +1358,13 @@ def main():
         map_by_type(dfr)
         map_by_prob(dfr)
 
-        # Raporu oluştur
+        # Raporu oluştur (Generate report)
         gen_report(
             dfr, CURRENT_USER, CURRENT_UTC_TIME,
-            f"Toplam {len(dfr)} olay analiz edildi. "
-            f"Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. "
-            f"Düzeltilmiş metrik hesaplama (NaN geçerli değil). "
-            f"(Total {len(dfr)} events analyzed with fixed scientific foreshock definition. "
-            f"Corrected metric calculation.)",
+            f"Toplam {len(dfr)} olay analiz edildi (Total {len(dfr)} events analyzed). "
+            f"Sabit oncu deprem tanimi (modelden bağımsız) kullanilmistir "
+            f"(Fixed foreshock definition - model independent). "
+            f"Düzeltilmiş metrik hesaplama (Corrected metric calculation - NaN handled).",
             new_ids, ami, expl
         )
 
