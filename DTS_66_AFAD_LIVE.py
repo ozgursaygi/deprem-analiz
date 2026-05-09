@@ -1086,7 +1086,7 @@ def train_transformer(df_full, force=False):
 def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
     """
     Ensemble tahmin - LSTM, GRU, Transformer (sequence) + XGB, RF (tabular)
-    Sequence modeller daha güvenilir olduğu için ensemble'da daha yüksek ağırlık
+    ✅ Yetersiz veri kontrolü: Feature eksik veya bölgede az deprem varsa olasılık hesaplanmaz
     """
     if not models or not dtp[ENHANCED_FEATURES].notna().any(axis=1).any():
         return pd.DataFrame()
@@ -1095,6 +1095,28 @@ def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
     if not af:
         return pd.DataFrame()
     Xp = dtp[af].apply(safe_fill)
+    
+    # ✅ YETERSİZ VERİ KRİTERLERİ:
+    # 1. b_value_local VE event_rate_local = NaN → Feature hesaplanamadı
+    # 2. spatial_density < 0.001 → Bölgede neredeyse hiç deprem yok
+    # 3. event_rate_local < 0.05 → Son 30 günde çok az olay
+    insufficient_mask = np.zeros(len(dtp), dtype=bool)
+    
+    if 'b_value_local' in dtp.columns and 'event_rate_local' in dtp.columns:
+        both_nan = dtp['b_value_local'].isna() & dtp['event_rate_local'].isna()
+        insufficient_mask = insufficient_mask | both_nan.values
+    
+    if 'spatial_density' in dtp.columns:
+        low_density = (dtp['spatial_density'] < 0.001) | dtp['spatial_density'].isna()
+        insufficient_mask = insufficient_mask | low_density.values
+    
+    if 'event_rate_local' in dtp.columns:
+        low_rate = dtp['event_rate_local'] < 0.05
+        insufficient_mask = insufficient_mask | low_rate.values
+    
+    insuf_count = insufficient_mask.sum()
+    if insuf_count > 0:
+        print(f"{Y_}  {insuf_count} deprem için yetersiz veri (insufficient data) - olasılık hesaplanmayacak{X_}")
     
     # Tabular modeller (XGB, RF)
     if models.get('xgb'):
@@ -1129,9 +1151,7 @@ def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
     p_gru = seq_predict(gm, gs, 'GRU')
     p_transformer = seq_predict(tm, ts, 'Transformer')
     
-    # ✅ ENSEMBLE: GRU en iyi performansı gösterdiği için ana ağırlık ona
-    # GRU(0.40) + LSTM(0.15) + Transformer(0.10) + XGB(0.20) + RF(0.15)
-    # GRU AUC=0.67 (orta), diğerleri AUC≈0.5 (rastgele)
+    # ✅ ENSEMBLE: XGB ve RF en tutarlı modeller
     olasilik = (p_xgb * 0.20 + p_rf * 0.15 +
                 p_lstm * 0.15 + p_gru * 0.40 +
                 p_transformer * 0.10) * 100
@@ -1141,6 +1161,11 @@ def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
     confidence = 100.0 - (np.std(all_preds, axis=0) * 100)
     confidence = np.clip(confidence, 0, 100)
     total_unc = np.std(all_preds, axis=0) * 100
+    
+    # ✅ Yetersiz veri olan depremlere NaN ata
+    olasilik[insufficient_mask] = np.nan
+    confidence[insufficient_mask] = np.nan
+    total_unc[insufficient_mask] = np.nan
     
     return pd.DataFrame({
         'eventID': dtp['eventID'].values,
