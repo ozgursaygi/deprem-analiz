@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'><meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'><meta http-equiv='Pragma' content='no-cache'><meta http-equiv='Expires' content='0'><title>Sismik Risk Raporu (Seismic Risk Report)</title><style>body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}h1{color:#2c3e50}h3{color:#34495e;margin-top:30px}table{width:100%;border-collapse:collapse;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}th{background:#004d40;color:white}tr:hover{background:#f1f1f1}.info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}</style></head><body><h1>Sismik Risk Analiz Raporu<br><span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Scientific v21 - Düzeltilmiş Bilimsel Metrikler)</span></h1><p><b>Rapor Tarihi (Report Date):</b> 2026-05-09 08:49:49 | <b>Kullanici (User):</b> ozgursaygi</p><div class='info'><b>Ozet (Summary):</b> Toplam 17368 olay analiz edildi. Sabit bilimsel oncu deprem tanimi (modelden bağımsız) kullanilmistir. Düzeltilmiş metrik hesaplama (NaN geçerli değil). (Total 17368 events analyzed with fixed scientific foreshock definition. Corrected metric calculation.)<br><b>Deprem Oncu Tanimi (Foreshock Definition):</b> Sabit bilimsel parametreler (Mag>=5.5, Time<=30gün, Dist<=50km, ΔM>=0.8). Bu parametreler model eğitiminden bağımsızdır ve değiştirilmez. (Dikkat: Gelecek ana şok bilgisi kullanılır - future leakage)</div><h3>Model Performans Metrikleri (Model Performance Metrics)</h3><div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'><b>📊 Bilimsel Yorum (Scientific Interpretation):</b><br>• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü ⚠ — kullanılmamalı<br>• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü<br>• <b>AUC 0.6-0.7:</b> Orta düzey (deprem tahmininde gerçekçi)<br>• <b>AUC ≥ 0.7:</b> İyi performans ✓<br>• <b>Skill Score &lt; 0:</b> Rastgeleden kötü ⚠<br>• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması (en önemli metrik)<br>• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık<br>• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek<br></div><p style='color:#d32f2f'><b>Not:</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür. Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur.</p><table style='width:100%;border-collapse:collapse'><tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th><th>Molchan Skill</th><th>Eşik (Threshold)</th></tr><tr><td><b>XGB</b></td><td><span style='color:#d32f2f;font-weight:bold'>0.318 ⚠</span></td><td>0.011</td><td>0.005</td><td>0.857</td><td><span style='color:#d32f2f;font-weight:bold'>-0.365 ⚠</span></td><td>0.002</td></tr><tr><td><b>RF</b></td><td><span style='color:#d32f2f;font-weight:bold'>0.495 ⚠</span></td><td>0.000</td><td>0.000</td><td>0.000</td><td><span style='color:#d32f2f;font-weight:bold'>-0.010 ⚠</span></td><td>0.004</td></tr><tr><td><b>LSTM</b></td><td><span style='color:#f57c00'>0.593</span></td><td>0.016</td><td>0.008</td><td>0.929</td><td><span style='color:#f57c00'>0.185</span></td><td>0.500</td></tr></table><p style='font-size:.9em;color:#666;margin-top:10px'><b>Bilimsel Notlar:</b><br>• Train/Validation/Test ayrımı zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme).<br>• Threshold validation setinde optimize edildi — test setine bakılmadı.<br>• Sınıf dengesizliği için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>• <b>Dikkat:</b> Deprem öncü tahmini bilimde çözülmemiş bir problemdir. Gerçek dünyada AUC 0.6-0.7 makul kabul edilir.</p><h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3><table border="1" class="dataframe">
+<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'><meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'><meta http-equiv='Pragma' content='no-cache'><meta http-equiv='Expires' content='0'><title>Risk Analiz Raporu (Risk Analysis Report)</title><style>body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}h1{color:#2c3e50}h3{color:#34495e;margin-top:30px}table{width:100%;border-collapse:collapse;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}th{background:#004d40;color:white}tr:hover{background:#f1f1f1}.info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}</style></head><body><h1>Risk Analiz Raporu (Risk Analysis Report)<br><span style='font-size:0.7em;color:#555'>v21 - Düzeltilmiş Metrikler (Corrected Metrics)</span></h1><p><b>Rapor Tarihi (Report Date):</b> 2026-05-09 09:12:35 | <b>Kullanici (User):</b> ozgursaygi</p><div class='info'><b>Ozet (Summary):</b> Toplam 17368 olay analiz edildi (Total 17368 events analyzed). Sabit oncu deprem tanimi (modelden bağımsız) kullanilmistir (Fixed foreshock definition - model independent). Düzeltilmiş metrik hesaplama (Corrected metric calculation - NaN handled).<br><b>Deprem Oncu Tanimi (Foreshock Definition):</b> Sabit parametreler / Fixed parameters (Mag>=5.5, Time<=30gün/days, Dist<=50km, ΔM>=0.8). Bu parametreler model eğitiminden bağımsızdır (model-independent). <b>Dikkat (Warning):</b> Gelecek ana şok bilgisi kullanılır (future mainshock info used - future leakage)</div><h3>Model Performans Metrikleri (Model Performance Metrics)</h3><div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'><b>📊 Yorum (Interpretation):</b><br>• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü (Worse than random) ⚠ — kullanılmamalı (do not use)<br>• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü (Weak discrimination)<br>• <b>AUC 0.6-0.7:</b> Orta düzey - deprem tahmininde gerçekçi (Moderate - realistic for earthquake prediction)<br>• <b>AUC ≥ 0.7:</b> İyi performans (Good performance) ✓<br>• <b>Skill Score &lt; 0:</b> Rastgeleden kötü (Worse than random) ⚠<br>• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması - en önemli metrik (Harmonic mean - most important metric)<br>• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık (How many actual foreshocks we caught)<br>• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek (How many of our predictions are correct)<br></div><p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür (If insufficient foreshock examples in test set, some metrics show 'N/A'). Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur (Optimal threshold found by maximizing F1 on validation set).</p><table style='width:100%;border-collapse:collapse'><tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th><th>Molchan Skill</th><th>Eşik (Threshold)</th></tr><tr><td><b>XGB</b></td><td><span style='color:#d32f2f;font-weight:bold'>0.318 ⚠</span></td><td>0.011</td><td>0.005</td><td>0.857</td><td><span style='color:#d32f2f;font-weight:bold'>-0.365 ⚠</span></td><td>0.002</td></tr><tr><td><b>RF</b></td><td><span style='color:#d32f2f;font-weight:bold'>0.495 ⚠</span></td><td>0.000</td><td>0.000</td><td>0.000</td><td><span style='color:#d32f2f;font-weight:bold'>-0.010 ⚠</span></td><td>0.004</td></tr><tr><td><b>LSTM</b></td><td>0.621</td><td>0.019</td><td>0.009</td><td>0.714</td><td><span style='color:#2e7d32;font-weight:bold'>0.242 ✓</span></td><td>0.500</td></tr></table><p style='font-size:.9em;color:#666;margin-top:10px'><b>Notlar (Notes):</b><br>• Train/Validation/Test ayrımı (split) zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme / leakage prevention).<br>• Threshold validation setinde optimize edildi (optimized) — test setine bakılmadı (not seen).<br>• Sınıf dengesizliği (class imbalance) için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).</p><h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3><table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
       <th>Zaman (Time UTC)</th>
@@ -17,7 +17,7 @@
       <td>4.0</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>11.17</td>
+      <td>12.57</td>
       <td>50.02</td>
     </tr>
     <tr>
@@ -26,7 +26,7 @@
       <td>4.0</td>
       <td>6.67</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td>11.15</td>
+      <td>12.56</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -44,7 +44,7 @@
       <td>5.0</td>
       <td>12.58</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.01</td>
+      <td>13.10</td>
       <td>50.08</td>
     </tr>
     <tr>
@@ -197,7 +197,7 @@
       <td>4.2</td>
       <td>5.80</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.85</td>
+      <td>13.08</td>
       <td>50.02</td>
     </tr>
     <tr>
@@ -242,7 +242,7 @@
       <td>4.5</td>
       <td>25.30</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.95</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -251,7 +251,7 @@
       <td>4.8</td>
       <td>5.53</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.72</td>
+      <td>13.14</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -278,7 +278,7 @@
       <td>4.3</td>
       <td>7.78</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.94</td>
+      <td>13.11</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -323,7 +323,7 @@
       <td>4.7</td>
       <td>38.10</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.99</td>
+      <td>13.19</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -431,7 +431,7 @@
       <td>4.5</td>
       <td>6.40</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.60</td>
+      <td>13.22</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -494,7 +494,7 @@
       <td>5.3</td>
       <td>6.08</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.77</td>
+      <td>13.09</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -512,7 +512,7 @@
       <td>4.0</td>
       <td>9.22</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.79</td>
+      <td>13.10</td>
       <td>50.03</td>
     </tr>
     <tr>
@@ -521,7 +521,7 @@
       <td>4.3</td>
       <td>4.59</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.68</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -530,7 +530,7 @@
       <td>4.3</td>
       <td>7.37</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.99</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -593,7 +593,7 @@
       <td>4.5</td>
       <td>6.55</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.70</td>
+      <td>13.16</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -638,7 +638,7 @@
       <td>4.7</td>
       <td>40.57</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>8.27</td>
+      <td>13.01</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -692,7 +692,7 @@
       <td>4.3</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.86</td>
+      <td>13.07</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -701,7 +701,7 @@
       <td>4.7</td>
       <td>6.57</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.73</td>
+      <td>13.12</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -710,7 +710,7 @@
       <td>4.5</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.00</td>
+      <td>13.22</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -809,7 +809,7 @@
       <td>4.0</td>
       <td>24.61</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>5.89</td>
+      <td>12.89</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -836,7 +836,7 @@
       <td>4.2</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>10.80</td>
+      <td>13.08</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -863,7 +863,7 @@
       <td>4.4</td>
       <td>7.88</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.92</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -908,7 +908,7 @@
       <td>4.1</td>
       <td>6.07</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.11</td>
+      <td>13.06</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -962,7 +962,7 @@
       <td>4.8</td>
       <td>7.03</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.61</td>
+      <td>13.04</td>
       <td>50.02</td>
     </tr>
     <tr>
@@ -971,7 +971,7 @@
       <td>4.4</td>
       <td>12.11</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.95</td>
+      <td>13.07</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -1034,7 +1034,7 @@
       <td>4.7</td>
       <td>11.68</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.90</td>
+      <td>13.12</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -1043,7 +1043,7 @@
       <td>4.1</td>
       <td>9.75</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.01</td>
+      <td>13.17</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -1304,7 +1304,7 @@
       <td>4.5</td>
       <td>15.29</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.79</td>
+      <td>13.19</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -1907,7 +1907,7 @@
       <td>4.1</td>
       <td>6.76</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>7.79</td>
+      <td>12.59</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -2186,7 +2186,7 @@
       <td>4.3</td>
       <td>15.60</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>9.80</td>
+      <td>13.49</td>
       <td>50.16</td>
     </tr>
     <tr>
@@ -2195,7 +2195,7 @@
       <td>4.1</td>
       <td>5.96</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>11.63</td>
+      <td>13.54</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -2276,7 +2276,7 @@
       <td>4.4</td>
       <td>8.99</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>1.73</td>
+      <td>13.26</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -2411,7 +2411,7 @@
       <td>4.3</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>1.81</td>
+      <td>13.23</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -3086,7 +3086,7 @@
       <td>4.0</td>
       <td>6.16</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>3.12</td>
+      <td>12.47</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -3500,7 +3500,7 @@
       <td>4.3</td>
       <td>6.94</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>4.73</td>
+      <td>13.30</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -4130,7 +4130,7 @@
       <td>4.2</td>
       <td>6.96</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>4.28</td>
+      <td>13.22</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -4643,7 +4643,7 @@
       <td>4.4</td>
       <td>7.20</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>4.24</td>
+      <td>13.19</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -4724,7 +4724,7 @@
       <td>4.3</td>
       <td>8.99</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>3.98</td>
+      <td>13.34</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -4742,7 +4742,7 @@
       <td>4.3</td>
       <td>5.44</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>4.03</td>
+      <td>13.30</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -4787,7 +4787,7 @@
       <td>4.5</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>5.65</td>
+      <td>13.29</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -4805,7 +4805,7 @@
       <td>4.4</td>
       <td>8.41</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>11.18</td>
+      <td>12.59</td>
       <td>50.04</td>
     </tr>
     <tr>
@@ -4859,7 +4859,7 @@
       <td>4.5</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>4.85</td>
+      <td>11.69</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -4886,7 +4886,7 @@
       <td>4.5</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>6.02</td>
+      <td>12.70</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5003,7 +5003,7 @@
       <td>4.7</td>
       <td>12.85</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>9.73</td>
+      <td>13.08</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -5048,7 +5048,7 @@
       <td>5.3</td>
       <td>6.45</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.86</td>
+      <td>13.32</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -5066,7 +5066,7 @@
       <td>4.0</td>
       <td>7.60</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.87</td>
+      <td>13.27</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5111,7 +5111,7 @@
       <td>4.1</td>
       <td>22.98</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.91</td>
+      <td>13.36</td>
       <td>50.08</td>
     </tr>
     <tr>
@@ -5120,7 +5120,7 @@
       <td>4.7</td>
       <td>10.57</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.96</td>
+      <td>13.34</td>
       <td>50.09</td>
     </tr>
     <tr>
@@ -5174,7 +5174,7 @@
       <td>4.8</td>
       <td>14.07</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.65</td>
+      <td>13.05</td>
       <td>50.03</td>
     </tr>
     <tr>
@@ -5354,7 +5354,7 @@
       <td>4.2</td>
       <td>7.10</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td>13.72</td>
+      <td>13.06</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -5363,7 +5363,7 @@
       <td>5.2</td>
       <td>7.16</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.83</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5372,7 +5372,7 @@
       <td>4.0</td>
       <td>13.04</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td>13.77</td>
+      <td>13.12</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5381,7 +5381,7 @@
       <td>4.1</td>
       <td>9.71</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.90</td>
+      <td>13.24</td>
       <td>50.08</td>
     </tr>
     <tr>
@@ -5399,7 +5399,7 @@
       <td>4.4</td>
       <td>25.75</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.11</td>
+      <td>13.15</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5408,7 +5408,7 @@
       <td>5.2</td>
       <td>25.83</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.00</td>
+      <td>13.07</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5435,7 +5435,7 @@
       <td>4.1</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.93</td>
+      <td>13.05</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5444,7 +5444,7 @@
       <td>4.5</td>
       <td>6.85</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.02</td>
+      <td>13.07</td>
       <td>50.02</td>
     </tr>
     <tr>
@@ -5561,7 +5561,7 @@
       <td>4.7</td>
       <td>12.80</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.72</td>
+      <td>13.10</td>
       <td>50.05</td>
     </tr>
     <tr>
@@ -5741,7 +5741,7 @@
       <td>4.1</td>
       <td>19.33</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.90</td>
+      <td>13.17</td>
       <td>50.03</td>
     </tr>
     <tr>
@@ -5858,7 +5858,7 @@
       <td>4.2</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.01</td>
+      <td>13.15</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -5912,7 +5912,7 @@
       <td>5.1</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.04</td>
+      <td>13.17</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6011,7 +6011,7 @@
       <td>4.0</td>
       <td>7.00</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td>14.13</td>
+      <td>13.21</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6020,7 +6020,7 @@
       <td>5.6</td>
       <td>5.25</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>3.45</td>
+      <td>13.42</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6029,7 +6029,7 @@
       <td>4.1</td>
       <td>7.00</td>
       <td><span style="color:#F57C00;font-weight:bold">Oncu Deprem (Foreshock)</span></td>
-      <td>11.17</td>
+      <td>12.57</td>
       <td>50.02</td>
     </tr>
     <tr>
@@ -6038,7 +6038,7 @@
       <td>4.7</td>
       <td>9.97</td>
       <td><span style="color:#F57C00;font-weight:bold">Oncu Deprem (Foreshock)</span></td>
-      <td>11.18</td>
+      <td>12.59</td>
       <td>50.05</td>
     </tr>
     <tr>
@@ -6065,7 +6065,7 @@
       <td>4.5</td>
       <td>5.68</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.80</td>
+      <td>13.20</td>
       <td>50.04</td>
     </tr>
     <tr>
@@ -6110,7 +6110,7 @@
       <td>4.2</td>
       <td>15.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.23</td>
+      <td>13.29</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6200,7 +6200,7 @@
       <td>4.0</td>
       <td>18.27</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.87</td>
+      <td>13.22</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -6353,7 +6353,7 @@
       <td>4.1</td>
       <td>5.13</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>11.56</td>
+      <td>13.22</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -6533,7 +6533,7 @@
       <td>4.1</td>
       <td>5.20</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>10.95</td>
+      <td>13.25</td>
       <td>50.04</td>
     </tr>
     <tr>
@@ -6731,7 +6731,7 @@
       <td>4.3</td>
       <td>15.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.08</td>
+      <td>13.20</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6740,7 +6740,7 @@
       <td>4.4</td>
       <td>18.14</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>11.07</td>
+      <td>13.28</td>
       <td>50.15</td>
     </tr>
     <tr>
@@ -6785,7 +6785,7 @@
       <td>4.4</td>
       <td>15.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.48</td>
+      <td>13.20</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -6857,7 +6857,7 @@
       <td>4.0</td>
       <td>7.02</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.84</td>
+      <td>13.24</td>
       <td>50.05</td>
     </tr>
     <tr>
@@ -6866,7 +6866,7 @@
       <td>4.0</td>
       <td>43.90</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>14.04</td>
+      <td>13.11</td>
       <td>50.00</td>
     </tr>
     <tr>
@@ -6893,7 +6893,7 @@
       <td>4.0</td>
       <td>37.80</td>
       <td><span style="color:#F57C00;font-weight:bold">Oncu Deprem (Foreshock)</span></td>
-      <td>13.89</td>
+      <td>13.10</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -7037,7 +7037,7 @@
       <td>4.2</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.91</td>
+      <td>13.10</td>
       <td>50.04</td>
     </tr>
     <tr>
@@ -7046,7 +7046,7 @@
       <td>4.8</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.75</td>
+      <td>13.05</td>
       <td>50.01</td>
     </tr>
     <tr>
@@ -7055,7 +7055,7 @@
       <td>4.0</td>
       <td>11.47</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td>13.79</td>
+      <td>13.06</td>
       <td>50.02</td>
     </tr>
     <tr>
