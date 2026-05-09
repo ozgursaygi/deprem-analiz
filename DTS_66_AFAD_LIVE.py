@@ -19,6 +19,13 @@ import time
 import requests
 from datetime import datetime, timedelta
 import numpy as np
+import random as py_random
+# ✅ DETERMINISTIC: Tekrarlanabilir sonuçlar için tüm random seed'leri sabitle
+py_random.seed(42)
+np.random.seed(42)
+import os as _os_init
+_os_init.environ['PYTHONHASHSEED'] = '42'
+_os_init.environ['TF_DETERMINISTIC_OPS'] = '1'
 import joblib
 import traceback
 import folium
@@ -36,6 +43,8 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
 from sklearn.utils.class_weight import compute_class_weight
 from xgboost import XGBClassifier
 from tensorflow.keras.models import Sequential, load_model
+import tensorflow as tf
+tf.random.set_seed(42)  # ✅ Tekrarlanabilir sonuçlar için
 from tensorflow.keras.layers import (LSTM, GRU, Dense, Dropout, Input, BatchNormalization,
                                      MultiHeadAttention, LayerNormalization, GlobalAveragePooling1D, Add)
 from tensorflow.keras.models import Model
@@ -287,7 +296,7 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
     if start_override:
         ss = standardize_date(start_override)
         if not ss:
-            ss = '1990-01-01 00:00:00'
+            ss = '1970-01-01 00:00:00'  # ✅ Daha eski veriler için
     else:
         cur.execute(f"SELECT MAX(time) FROM {tn}")
         r = cur.fetchone()
@@ -300,13 +309,37 @@ def fetch_and_load_api_data(conn, tn, start_override=None):
                 else:
                     ss = (ldt + timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
             except Exception:
-                ss = '1990-01-01 00:00:00'
+                ss = '1970-01-01 00:00:00'  # ✅ Daha eski veriler için
         else:
-            ss = '1990-01-01 00:00:00'
+            ss = '1970-01-01 00:00:00'  # ✅ Daha eski veriler için
     api_s = pd.to_datetime(ss).strftime('%Y-%m-%d %H:%M:%S')
     api_e = pd.to_datetime(end_lim).strftime('%Y-%m-%d %H:%M:%S')
     if api_s > api_e:
         api_s = (now - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+    
+    # ✅ İYİLEŞTİRME: Eğer aralık 2 yıldan büyükse, yıl bazlı çek
+    api_s_dt = pd.to_datetime(api_s)
+    api_e_dt = pd.to_datetime(api_e)
+    range_years = (api_e_dt - api_s_dt).days / 365.25
+    
+    if range_years > 2:
+        print(f"{C_}Büyük zaman aralığı ({range_years:.1f} yıl) - yıl bazlı çekiliyor...{X_}")
+        all_new_ids = []
+        current_start = api_s_dt
+        while current_start < api_e_dt:
+            chunk_end = min(current_start + timedelta(days=365), api_e_dt)
+            chunk_ids = _fetch_chunk(conn, tn, cur,
+                                     current_start.strftime('%Y-%m-%d %H:%M:%S'),
+                                     chunk_end.strftime('%Y-%m-%d %H:%M:%S'),
+                                     end_lim)
+            all_new_ids.extend(chunk_ids)
+            current_start = chunk_end + timedelta(seconds=1)
+        return all_new_ids
+    
+    return _fetch_chunk(conn, tn, cur, api_s, api_e, end_lim)
+
+def _fetch_chunk(conn, tn, cur, api_s, api_e, end_lim):
+    """Tek bir zaman aralığı için API'den veri çek."""
     params = {'start': api_s, 'end': api_e, 'orderby': 'time-asc', 'minmag': '3.5'}
     for att in range(5):
         try:
@@ -845,31 +878,32 @@ def build_gru(shape):
         Dense(1, activation='sigmoid')
     ])
 
-def build_transformer(shape, num_heads=4, ff_dim=64, num_blocks=2):
-    """Transformer model - attention mekanizması, deprem zaman dizisi için ideal"""
+def build_transformer(shape, num_heads=2, ff_dim=32, num_blocks=1):
+    """
+    Transformer model - sadeleştirilmiş versiyon
+    Az pozitif örnek için 1 blok, 2 head (overfit önleme)
+    """
     inputs = Input(shape=shape)
     x = inputs
     
-    # Transformer blokları
+    # Tek transformer bloğu (az veri için yeterli)
     for _ in range(num_blocks):
         # Multi-head self-attention
-        attn = MultiHeadAttention(num_heads=num_heads, key_dim=shape[-1], dropout=0.2)(x, x)
+        attn = MultiHeadAttention(num_heads=num_heads, key_dim=shape[-1], dropout=0.3)(x, x)
         x_attn = Add()([x, attn])
         x_attn = LayerNormalization(epsilon=1e-6)(x_attn)
         
-        # Feed-forward network
-        ff = Dense(ff_dim, activation='relu', kernel_regularizer=l2(0.01))(x_attn)
-        ff = Dropout(0.3)(ff)
+        # Feed-forward network (basitleştirilmiş)
+        ff = Dense(ff_dim, activation='relu', kernel_regularizer=l2(0.02))(x_attn)
+        ff = Dropout(0.4)(ff)
         ff = Dense(shape[-1])(ff)
         x = Add()([x_attn, ff])
         x = LayerNormalization(epsilon=1e-6)(x)
     
-    # Pooling ve sınıflandırma
+    # Pooling ve sınıflandırma (basit)
     x = GlobalAveragePooling1D()(x)
-    x = Dense(64, activation='relu', kernel_regularizer=l2(0.01))(x)
+    x = Dense(32, activation='relu', kernel_regularizer=l2(0.02))(x)
     x = Dropout(0.5)(x)
-    x = Dense(32, activation='relu')(x)
-    x = Dropout(0.3)(x)
     outputs = Dense(1, activation='sigmoid')(x)
     
     return Model(inputs=inputs, outputs=outputs)
@@ -1002,14 +1036,26 @@ def train_sequence_model(df_full, model_type='lstm', force=False):
     mdl.fit(X_seq_tr, y_seq_tr, epochs=epochs, batch_size=32,
             callbacks=[es], class_weight=class_weights, verbose=0)
     
-    ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=0.5)
+    # ✅ İYİLEŞTİRME: F1-optimal threshold bul (eğitim seti üzerinde)
+    train_proba = mdl.predict(X_seq_tr, verbose=0).flatten()
+    if y_seq_tr.sum() > 0 and len(np.unique(y_seq_tr)) >= 2:
+        prec, rec, ths = precision_recall_curve(y_seq_tr, train_proba)
+        f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
+        best_th = float(ths[np.argmax(f1_scores[:-1])]) if len(ths) > 0 else 0.5
+        # Aşırı düşük threshold'ları engelle (overfit göstergesi)
+        best_th = max(0.05, min(0.7, best_th))
+    else:
+        best_th = 0.5
+    print(f"{C_}  {label} optimum eşik: {best_th:.3f}{X_}")
+    
+    ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=best_th)
     met = {
         'auc': ps.get('auc', np.nan),
         'molchan_skill': ps.get('skill_score', np.nan),
         'f1_score': ps.get('f1_score', 0.0),
         'precision': ps.get('precision', 0.0),
         'recall': ps.get('recall', 0.0),
-        'optimal_threshold': 0.5,
+        'optimal_threshold': best_th,
         'prospective_accuracy': ps['accuracy'],
         'prospective_precision': ps['precision'],
         'prospective_recall': ps['recall'],
@@ -1020,7 +1066,7 @@ def train_sequence_model(df_full, model_type='lstm', force=False):
     mdl.save(mp)
     joblib.dump(scl, sp)
     auc_disp = f"{ps.get('auc'):.3f}" if not np.isnan(ps.get('auc', np.nan)) else "N/A"
-    print(f"{G_}{label} Hazir | AUC:{auc_disp} | F1:{ps.get('f1_score', 0):.3f} | Recall:{ps['recall']:.3f} | Test pos: {ps.get('pos_count', 0)}/{ps.get('total_count', 0)}{X_}")
+    print(f"{G_}{label} Hazir | AUC:{auc_disp} | F1:{ps.get('f1_score', 0):.3f} | Recall:{ps['recall']:.3f} | Threshold:{best_th:.3f} | Test pos: {ps.get('pos_count', 0)}/{ps.get('total_count', 0)}{X_}")
     return mdl, scl, met
 
 def train_lstm(df_full, new_ids, force=False):
@@ -1081,12 +1127,12 @@ def predict_unc(dtp, models, lm, ls, gm=None, gs=None, tm=None, ts=None):
     p_gru = seq_predict(gm, gs, 'GRU')
     p_transformer = seq_predict(tm, ts, 'Transformer')
     
-    # ✅ ENSEMBLE: Sequence modellerine daha fazla ağırlık ver
-    # Tabular: XGB(0.15) + RF(0.15) = 0.30
-    # Sequence: LSTM(0.20) + GRU(0.20) + Transformer(0.30) = 0.70
-    olasilik = (p_xgb * 0.15 + p_rf * 0.15 +
-                p_lstm * 0.20 + p_gru * 0.20 +
-                p_transformer * 0.30) * 100
+    # ✅ ENSEMBLE: GRU en iyi performansı gösterdiği için ana ağırlık ona
+    # GRU(0.40) + LSTM(0.15) + Transformer(0.10) + XGB(0.20) + RF(0.15)
+    # GRU AUC=0.67 (orta), diğerleri AUC≈0.5 (rastgele)
+    olasilik = (p_xgb * 0.20 + p_rf * 0.15 +
+                p_lstm * 0.15 + p_gru * 0.40 +
+                p_transformer * 0.10) * 100
     
     # Güven skoru: tüm modellerin uyumu
     all_preds = np.array([p_xgb, p_rf, p_lstm, p_gru, p_transformer])
