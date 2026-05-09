@@ -2,16 +2,16 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *'
-  workflow_dispatch:
+    - cron: '0 */12 * * *'  # Her 6 saatte bir
+  workflow_dispatch:  # Manuel tetikleme
 
 permissions:
-  contents: write
+  contents: write  # Release oluşturma ve içerik güncelleme için gerekli
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30  # Maksimum 30 dakika
     
     steps:
     - name: Checkout Repository
@@ -32,6 +32,7 @@ jobs:
     
     - name: Run Analysis Script
       env:
+        # ✅ ÖNEMLİ: Database upload için GitHub token
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         python DTS_66_AFAD_LIVE.py
