@@ -2,64 +2,45 @@ name: Daily Earthquake Analysis
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # Her 12 saatte bir
-  workflow_dispatch:         # Manuel çalıştırma
+    - cron: '0 */12 * * *'  # Her 6 saatte bir
+  workflow_dispatch:  # Manuel tetikleme
 
-# --- KRİTİK İZİN ---
 permissions:
-  contents: write
-# --------------------
+  contents: write  # Release oluşturma ve içerik güncelleme için gerekli
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30  # Maksimum 30 dakika
+    
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Run Analysis Script
-        run: python DTS_66_AFAD_LIVE.py
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Commit and Push Changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Yalnızca docs/ klasörünü ekle (tüm raporlar, grafikler ve last_update.txt burada)
-          git add -A docs/
-          
-          if git diff --staged --quiet; then
-            echo "Değişiklik yok, commit atlanıyor."
-          else
-            git commit -m "Otomatik veri ve analiz güncellemesi [skip ci]"
-            
-            for i in 1 2 3; do
-              echo "Deneme $i..."
-              # Hata almamak için unstaged değişiklikleri saklayıp (autostash) rebase yapıyoruz
-              git pull --rebase --autostash origin main
-              
-              if git push origin main; then
-                echo "Başarıyla güncellendi."
-                exit 0
-              fi
-              
-              echo "Push başarısız, 10 saniye bekleniyor..."
-              sleep 10
-            done
-            exit 1
-          fi
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run Analysis Script
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        python DTS_66_AFAD_LIVE.py
+    
+    - name: Commit and Push Changes
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add docs/
+        git diff --staged --quiet || git commit -m "Otomatik veri ve analiz güncellemesi [skip ci]"
+        git push
+      continue-on-error: true
