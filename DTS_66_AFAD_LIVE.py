@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Sismik Risk Analiz Sistemi - v20
-Düzeltilmiş metrikler, prospektif simülasyon, LSTM sequence fix,
-raporları docs klasörüne kopyalama, binary dosyaları repodan hariç tutma.
-[v20 İYİLEŞTİRMELER]
-- docs/ klasörü yönetimi fonksiyonları eklendi
-- Dosya yazma esnasında hata kontrolü iyileştirildi
-- GitHub Pages uyumluluğu artırıldı
+Sismik Risk Analiz Sistemi - v21 (BİLİMSEL DÜZELTMELER)
+
+v21 KRİTİK DÜZELTMELER:
+1. Gap-buffered train/validation/test split (60 gün buffer foreshock leakage'ı önler)
+2. Threshold optimizasyonu validation setinde (test set leakage'ı önler)
+3. LSTM class_weight ile sınıf dengesizliği yönetimi
+4. F1, Precision, Recall metrikleri ön planda (Accuracy yanıltıcı imbalanced data'da)
+5. Olumsuz Skill Score için belirgin uyarılar
+6. Doğru bilimsel yorumlama notları raporda
+
+v20'den kalan iyileştirmeler:
+- docs/ klasörü yönetimi
+- GitHub Pages uyumluluğu
 """
 
 import pandas as pd
@@ -482,9 +488,16 @@ def classify_eq_type(df):
 
 def create_labels_parametric(df, mag_threshold=None, tw_days=None, r_km=None, verbose=True):
     """
-    Dikkat: Bu fonksiyon, her depremin *gelecekteki* ana şok bilgisini kullanarak
-    foreshock etiketi üretir. Bu, future leakage yaratır. Gerçek zamanlı uygulama için
-    yalnızca geçmiş ana şoklarla etiketleme yapılmalıdır.
+    BİLİMSEL ETİKETLEME (v21):
+    Foreshock etiketi, depremin gelecekteki bir ana şokun öncüsü olduğunu belirler.
+    
+    ÖNEMLİ: Bu etiketleme TANIM gereği gelecek bilgisi kullanır (foreshock kavramı
+    geleceğe işarettir). Ancak ÖZELLİKLER (features) sadece geçmişten hesaplanır,
+    yani modelin tahmin edeceği şey gelecektir, ama tahmin edeceği veriler geçmiştir.
+    Bu standart sismolojik yaklaşımdır.
+    
+    Önemli düzeltme: Train/Test ayrımı sıkı zaman bazlı yapılmalı ki test setindeki
+    ana şoklar train etiketlerini etkilemesin.
     """
     if mag_threshold is None:
         mag_threshold = FORESHOCK_MAG_THRESHOLD
@@ -682,14 +695,41 @@ def plot_molchan(md, fn='molchan.png'):
 
 # ====================== EĞİTİM FONKSİYONLARI ======================
 def train_sklearn_improved(df_full, new_ids, force=False):
+    """
+    BİLİMSEL DÜZELTMELER (v21):
+    1. Gap-buffered split: Train ve test arasında 60 gün buffer (foreshock pencereden taşmaması için)
+    2. Validation set: Threshold optimizasyonu için ayrı set (test setine bakılmaz)
+    3. Doğru metrik raporlama: F1, Precision, Recall ön planda
+    """
     models = {'xgb': None, 'rf': None}
     metrics = {'xgb': {}, 'rf': {}}
     mp = {'xgb': 'xgb_v5.joblib', 'rf': 'rf_v5.joblib'}
-    cutoff = df_full['time'].quantile(0.8)
-    trd = df_full[df_full['time'] <= cutoff].copy()
-    ted = df_full[df_full['time'] > cutoff].copy()
-    if len(ted) < 10:
-        print(f"{Y_}Test seti çok küçük, model eğitimi atlanıyor.{X_}")
+    
+    # Zamansal sıralama
+    df_full = df_full.sort_values('time').reset_index(drop=True)
+    
+    # GAP-BUFFERED 3'lü split: Train (60%) | GAP (60d) | Validation (20%) | GAP (60d) | Test (20%)
+    n = len(df_full)
+    cutoff_train = df_full['time'].quantile(0.6)
+    cutoff_val = df_full['time'].quantile(0.8)
+    
+    # Buffer süreleri (foreshock penceresi 30 gün, ama güvenlik için 60 gün ekliyoruz)
+    buffer_days = FORESHOCK_TIME_WINDOW_DAYS * 2
+    gap_train_val = cutoff_train + timedelta(days=buffer_days)
+    gap_val_test = cutoff_val + timedelta(days=buffer_days)
+    
+    trd = df_full[df_full['time'] <= cutoff_train].copy()
+    vad = df_full[(df_full['time'] >= gap_train_val) & (df_full['time'] <= cutoff_val)].copy()
+    ted = df_full[df_full['time'] >= gap_val_test].copy()
+    
+    print(f"{C_}Bilimsel zamansal ayrım (gap-buffered):{X_}")
+    print(f"  Train: {len(trd)} olay (≤{cutoff_train.strftime('%Y-%m-%d')})")
+    print(f"  Validation: {len(vad)} olay")
+    print(f"  Test: {len(ted)} olay (≥{gap_val_test.strftime('%Y-%m-%d')})")
+    print(f"  Gap: {buffer_days} gün (foreshock leakage'ı önlemek için)")
+    
+    if len(ted) < 10 or len(vad) < 10:
+        print(f"{Y_}Validation/Test seti çok küçük, model eğitimi atlanıyor.{X_}")
         return {}, {}, {}
     if not force and all(os.path.exists(p) for p in mp.values()):
         for k in models:
@@ -697,10 +737,16 @@ def train_sklearn_improved(df_full, new_ids, force=False):
         return models, metrics, {}
 
     trd = fix_numeric(trd)
+    vad = fix_numeric(vad)
     ted = fix_numeric(ted)
     print(f"{C_}Sabit bilimsel parametrelerle foreshock etiketlemesi yapiliyor...{X_}")
-    trl = create_labels_parametric(trd.copy())
-    tel = create_labels_parametric(ted.copy())
+    # ÖNEMLI: Her set'in etiketlemesi KENDİ İÇİNDE yapılır - leakage yok
+    trl = create_labels_parametric(trd.copy(), verbose=True)
+    val = create_labels_parametric(vad.copy(), verbose=False)
+    tel = create_labels_parametric(ted.copy(), verbose=False)
+    print(f"{G_}  Train pozitif oranı: %{trl[TARGET].mean()*100:.2f}{X_}")
+    print(f"{G_}  Validation pozitif oranı: %{val[TARGET].mean()*100:.2f}{X_}")
+    print(f"{G_}  Test pozitif oranı: %{tel[TARGET].mean()*100:.2f}{X_}")
 
     sensitivity_df = sensitivity_analysis_foreshock(trd)
     if sensitivity_df is not None:
@@ -710,6 +756,8 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     af = [f for f in ENHANCED_FEATURES if f in trl.columns]
     Xtr = trl[af].apply(safe_fill)
     ytr = trl[TARGET]
+    Xva = val[af].apply(safe_fill)
+    yva = val[TARGET]
     Xte = tel[af].apply(safe_fill)
     yte = tel[TARGET]
 
@@ -717,47 +765,64 @@ def train_sklearn_improved(df_full, new_ids, force=False):
         print(f"{R_}Eğitim setinde hiç foreshock örneği yok! Model eğitilemez.{X_}")
         return {}, {}, {}
     if yte.sum() == 0:
-        print(f"{Y_}Uyarı: Test setinde hiç foreshock yok. Metrikler geçersiz olacak.{X_}")
+        print(f"{Y_}Uyarı: Test setinde hiç foreshock yok. Test metrikleri geçersiz.{X_}")
+    if yva.sum() == 0:
+        print(f"{Y_}Uyarı: Validation setinde hiç foreshock yok. Default threshold kullanılacak.{X_}")
 
     for mtype in ['xgb', 'rf']:
-        bp = None  # Optuna'yı skip et - varsayılan parametreler kullan
+        bp = None
         if mtype == 'xgb':
             n_neg = (ytr == 0).sum()
             n_pos = (ytr == 1).sum()
             scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1
-            mdl = XGBClassifier(**(bp or {'n_estimators': 300, 'max_depth': 8,
-                                          'learning_rate': 0.1, 'random_state': 42,
-                                          'use_label_encoder': False, 'eval_metric': 'logloss'}),
+            mdl = XGBClassifier(**(bp or {'n_estimators': 300, 'max_depth': 6,
+                                          'learning_rate': 0.05, 'random_state': 42,
+                                          'use_label_encoder': False, 'eval_metric': 'logloss',
+                                          'subsample': 0.8, 'colsample_bytree': 0.8}),
                                 scale_pos_weight=scale_pos_weight)
         else:
-            mdl = RandomForestClassifier(**(bp or {'n_estimators': 300, 'max_depth': 15, 'random_state': 42}),
+            mdl = RandomForestClassifier(**(bp or {'n_estimators': 300, 'max_depth': 12,
+                                                   'min_samples_split': 5, 'random_state': 42}),
                                          class_weight='balanced')
         mdl.fit(Xtr, ytr)
         cal = CalibratedClassifierCV(mdl, method='sigmoid', cv=3)
         cal.fit(Xtr, ytr)
-        yp = cal.predict(Xte)
+
+        # ✅ DÜZELTME: Threshold'u VALIDATION setinde optimize et (test'e bakılmaz)
+        if yva.sum() > 0:
+            va_proba = cal.predict_proba(Xva)[:, 1]
+            prec, rec, ths = precision_recall_curve(yva, va_proba)
+            f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
+            best_th = ths[np.argmax(f1_scores[:-1])] if len(ths) > 0 else 0.5
+        else:
+            best_th = 0.5
+        print(f"{C_}  {mtype.upper()} optimum eşik: {best_th:.3f}{X_}")
+
+        # TEST setinde değerlendir (threshold validation'dan geldi)
         ypr = cal.predict_proba(Xte)[:, 1]
+        yp = (ypr >= best_th).astype(int)
 
         met = get_metrics(yte, yp, ypr)
+        met['optimal_threshold'] = best_th
         mcd = calc_molchan(yte, ypr)
         met['molchan_skill'] = mcd['skill_score']
         met['molchan_auc'] = mcd['molchan_auc']
 
-        # Optimum eşiği eğitim setinde bul
-        tr_proba = cal.predict_proba(Xtr)[:, 1]
-        prec, rec, ths = precision_recall_curve(ytr, tr_proba)
-        f1_scores = 2 * (prec * rec) / (prec + rec + 1e-9)
-        best_th = ths[np.argmax(f1_scores[:-1])] if len(ths) > 0 else 0.5
-        ps = prospective_sim(tel, cal, af, threshold=best_th)
-        met['prospective_accuracy'] = ps['accuracy']
-        met['prospective_precision'] = ps['precision']
-        met['prospective_recall'] = ps['recall']
+        # Prospektif simülasyon (zaten test setinde optimum threshold ile)
+        met['prospective_accuracy'] = (yp == yte.values).mean() * 100
+        met['prospective_precision'] = precision_score(yte, yp, zero_division=0)
+        met['prospective_recall'] = recall_score(yte, yp, zero_division=0)
+        met['prospective_f1'] = f1_score(yte, yp, zero_division=0)
+
+        # ✅ DÜZELTME: Olumsuz Skill Score uyarısı
+        if met['molchan_skill'] < 0:
+            print(f"{R_}  ⚠ {mtype.upper()} UYARI: Skill Score < 0 (rastgeleden kötü). Bu model güvenilir değil.{X_}")
 
         models[mtype] = cal
         metrics[mtype] = met
         plot_molchan(mcd, fn=f'molchan_{mtype}.png')
         joblib.dump(cal, mp[mtype])
-        print(f"{G_}{mtype.upper()} Hazir | AUC:{met['auc']:.3f} (Skill:{met['molchan_skill']:.3f}){X_}")
+        print(f"{G_}{mtype.upper()} Hazir | AUC:{met['auc']:.3f} | F1:{met['f1_score']:.3f} | Recall:{met['recall']:.3f} | Skill:{met['molchan_skill']:.3f}{X_}")
     return models, metrics, {}
 
 def build_lstm(shape):
@@ -793,6 +858,12 @@ def prospective_sim_lstm(model, scaler, df_test, feature_cols, seq_length=50, th
     return {'accuracy': acc, 'precision': p, 'recall': r}
 
 def train_lstm(df_full, new_ids, force=False):
+    """
+    BİLİMSEL DÜZELTMELER (v21):
+    1. class_weight ile sınıf dengesizliğini yönet
+    2. Gap-buffered split
+    3. AUC metriği ve F1 hesabı
+    """
     mp = 'lstm_v5.keras'
     sp = 'lstm_scaler_v5.joblib'
     seq_length = 50
@@ -803,10 +874,18 @@ def train_lstm(df_full, new_ids, force=False):
             return mdl, scl, {}
         except Exception:
             pass
-    cutoff = df_full['time'].quantile(0.8)
-    trd = df_full[df_full['time'] <= cutoff].copy()
-    ted = df_full[df_full['time'] > cutoff].copy()
+    
+    # Gap-buffered split
+    df_full = df_full.sort_values('time').reset_index(drop=True)
+    cutoff_train = df_full['time'].quantile(0.8)
+    buffer_days = FORESHOCK_TIME_WINDOW_DAYS * 2
+    gap_train_test = cutoff_train + timedelta(days=buffer_days)
+    
+    trd = df_full[df_full['time'] <= cutoff_train].copy()
+    ted = df_full[df_full['time'] >= gap_train_test].copy()
+    
     if len(ted) < seq_length + 10:
+        print(f"{Y_}LSTM: Test seti çok küçük (gap-buffered split sonrası), atlanıyor.{X_}")
         return None, None, {}
     trd = fix_numeric(trd)
     ted = fix_numeric(ted)
@@ -828,16 +907,33 @@ def train_lstm(df_full, new_ids, force=False):
         return None, None, {}
     X_seq_tr = np.array(X_seq_tr)
     y_seq_tr = np.array(y_seq_tr)
+    
+    # ✅ DÜZELTME: Pozitif örnek yoksa LSTM eğitilemez
+    if y_seq_tr.sum() == 0:
+        print(f"{Y_}LSTM: Eğitim setinde foreshock yok, model eğitilemiyor.{X_}")
+        return None, None, {}
+    
+    # ✅ DÜZELTME: Class weight hesabı (sınıf dengesizliği için)
+    n_pos = y_seq_tr.sum()
+    n_neg = len(y_seq_tr) - n_pos
+    class_weights = {0: 1.0, 1: float(n_neg / max(n_pos, 1))}
+    print(f"{C_}  LSTM class weights: {class_weights}{X_}")
+    
     mdl = build_lstm((seq_length, X_seq_tr.shape[2]))
     mdl.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['AUC'])
-    es = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
-    mdl.fit(X_seq_tr, y_seq_tr, epochs=50, batch_size=16, callbacks=[es], verbose=0)
-    ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length)
-    met = {'prospective_accuracy': ps['accuracy'], 'prospective_precision': ps['precision'],
-           'prospective_recall': ps['recall']}
+    es = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+    mdl.fit(X_seq_tr, y_seq_tr, epochs=30, batch_size=32,
+            callbacks=[es], class_weight=class_weights, verbose=0)
+    
+    # F1-optimal threshold validation gerekir, basitlik için 0.5
+    ps = prospective_sim_lstm(mdl, scl, tel, af, seq_length=seq_length, threshold=0.5)
+    met = {'prospective_accuracy': ps['accuracy'],
+           'prospective_precision': ps['precision'],
+           'prospective_recall': ps['recall'],
+           'prospective_f1': 2*ps['precision']*ps['recall']/(ps['precision']+ps['recall']+1e-9)}
     mdl.save(mp)
     joblib.dump(scl, sp)
-    print(f"{G_}LSTM Hazir | Prospektif Dogruluk:%{ps['accuracy']:.1f}{X_}")
+    print(f"{G_}LSTM Hazir | Acc:%{ps['accuracy']:.1f} | Precision:{ps['precision']:.3f} | Recall:{ps['recall']:.3f} | F1:{met['prospective_f1']:.3f}{X_}")
     return mdl, scl, met
 
 def predict_unc(dtp, models, lm, ls):
@@ -1039,29 +1135,71 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
             if mt and isinstance(mt, dict):
                 auc_val = mt.get('auc', np.nan)
                 auc_str = f"{auc_val:.3f}" if not np.isnan(auc_val) else "N/A"
+                # AUC renk kodlama
+                if not np.isnan(auc_val):
+                    if auc_val < 0.5:
+                        auc_str = f"<span style='color:#d32f2f;font-weight:bold'>{auc_val:.3f} ⚠</span>"
+                    elif auc_val < 0.6:
+                        auc_str = f"<span style='color:#f57c00'>{auc_val:.3f}</span>"
+                    elif auc_val >= 0.7:
+                        auc_str = f"<span style='color:#2e7d32;font-weight:bold'>{auc_val:.3f} ✓</span>"
+                
                 skill_val = mt.get('molchan_skill', np.nan)
-                skill_str = f"{skill_val:.3f}" if not np.isnan(skill_val) else "N/A"
-                prosp_acc = mt.get('prospective_accuracy', np.nan)
-                prosp_str = f"%{prosp_acc:.1f}" if not np.isnan(prosp_acc) else "N/A"
-                brier_val = mt.get('brier_score', np.nan)
-                brier_str = f"{brier_val:.3f}" if not np.isnan(brier_val) else "N/A"
+                if not np.isnan(skill_val):
+                    if skill_val < 0:
+                        skill_str = f"<span style='color:#d32f2f;font-weight:bold'>{skill_val:.3f} ⚠</span>"
+                    elif skill_val < 0.2:
+                        skill_str = f"<span style='color:#f57c00'>{skill_val:.3f}</span>"
+                    else:
+                        skill_str = f"<span style='color:#2e7d32;font-weight:bold'>{skill_val:.3f} ✓</span>"
+                else:
+                    skill_str = "N/A"
+
+                # F1, Precision, Recall (sklearn modelleri için)
+                f1_val = mt.get('f1_score', mt.get('prospective_f1', np.nan))
+                f1_str = f"{f1_val:.3f}" if not np.isnan(f1_val) else "N/A"
+                prec_val = mt.get('precision', mt.get('prospective_precision', np.nan))
+                prec_str = f"{prec_val:.3f}" if not np.isnan(prec_val) else "N/A"
+                rec_val = mt.get('recall', mt.get('prospective_recall', np.nan))
+                rec_str = f"{rec_val:.3f}" if not np.isnan(rec_val) else "N/A"
+                
+                threshold_val = mt.get('optimal_threshold', np.nan)
+                threshold_str = f"{threshold_val:.3f}" if not np.isnan(threshold_val) else "0.500"
+                
                 rows += (f"<tr><td><b>{mn.upper()}</b></td>"
                          f"<td>{auc_str}</td>"
+                         f"<td>{f1_str}</td>"
+                         f"<td>{prec_str}</td>"
+                         f"<td>{rec_str}</td>"
                          f"<td>{skill_str}</td>"
-                         f"<td>{prosp_str}</td>"
-                         f"<td>{brier_str}</td></tr>")
+                         f"<td>{threshold_str}</td></tr>")
         if rows:
             perf = (
                 "<h3>Model Performans Metrikleri (Model Performance Metrics)</h3>"
-                "<p style='color:#d32f2f'><b>Not:</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür.</p>"
+                "<div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'>"
+                "<b>📊 Bilimsel Yorum (Scientific Interpretation):</b><br>"
+                "• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü ⚠ — kullanılmamalı<br>"
+                "• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü<br>"
+                "• <b>AUC 0.6-0.7:</b> Orta düzey (deprem tahmininde gerçekçi)<br>"
+                "• <b>AUC ≥ 0.7:</b> İyi performans ✓<br>"
+                "• <b>Skill Score &lt; 0:</b> Rastgeleden kötü ⚠<br>"
+                "• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması (en önemli metrik)<br>"
+                "• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık<br>"
+                "• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek<br>"
+                "</div>"
+                "<p style='color:#d32f2f'><b>Not:</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür. "
+                "Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur.</p>"
                 "<table style='width:100%;border-collapse:collapse'>"
-                "<tr><th>Model</th><th>AUC</th><th>Molchan Beceri Skoru (Skill Score)</th>"
-                "<th>Prospektif Dogruluk (Prospective Accuracy)</th><th>Brier Skoru (Brier Score)</th></tr>"
+                "<tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th>"
+                "<th>Molchan Skill</th><th>Eşik (Threshold)</th></tr>"
                 + rows +
                 "</table>"
                 "<p style='font-size:.9em;color:#666;margin-top:10px'>"
-                "<b>Molchan Beceri Skoru:</b> 1.0 = Mukemmel, 0.0 = Rastgele, <0 = Rastgeleden kötü<br>"
-                "<b>Prospektif Dogruluk:</b> Gerçek zamanlı tahmin simülasyonu başarı oranı (optimum eşik ile)</p>"
+                "<b>Bilimsel Notlar:</b><br>"
+                "• Train/Validation/Test ayrımı zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme).<br>"
+                "• Threshold validation setinde optimize edildi — test setine bakılmadı.<br>"
+                "• Sınıf dengesizliği için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>"
+                "• <b>Dikkat:</b> Deprem öncü tahmini bilimde çözülmemiş bir problemdir. Gerçek dünyada AUC 0.6-0.7 makul kabul edilir.</p>"
             )
 
     tbl = rt.to_html(index=False, escape=False)
@@ -1083,7 +1221,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
         ".info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}"
         "</style></head><body>"
         "<h1>Sismik Risk Analiz Raporu<br>"
-        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Improved v20 - GitHub Pages Uyumlu)</span></h1>"
+        "<span style='font-size:0.7em;color:#555'>Seismic Risk Analysis Report (Scientific v21 - Düzeltilmiş Bilimsel Metrikler)</span></h1>"
         f"<p><b>Rapor Tarihi (Report Date):</b> {rtime} | <b>Kullanici (User):</b> {user}</p>"
         f"<div class='info'>"
         f"<b>Ozet (Summary):</b> {summary}<br>"
@@ -1111,7 +1249,7 @@ def main():
     conn = None
     try:
         print(f"{C_}{'='*70}")
-        print("Sismik Analiz v20 (Seismic Analysis v20 - GitHub Pages Uyumlu)")
+        print("Sismik Analiz v21 (Scientific - Düzeltilmiş Bilimsel Metrikler)")
         print(f"{'='*70}{X_}")
 
         # ✅ docs/ klasörünü hazırla (v20 - YENİ)
