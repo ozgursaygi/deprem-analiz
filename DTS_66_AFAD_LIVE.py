@@ -1265,21 +1265,18 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
     gc = 'Guven Skoru (Confidence Score)'
 
     def fp(row):
-        # ✅ ARTÇI FİLTRESİ: Artçı depremler için olasılık gösterme (mantıksız)
+        # ✅ SADECE ÖNCÜ FİLTRESİ:
+        # Öncü: Büyük deprem zaten gelmiş → olasılık gereksiz ve yanıltıcı
+        # Artçı: Yeni bir büyük depremin öncüsü OLABİLİR → olasılık GÖSTERİLMELİ!
         et = row.get('Deprem Tipi (Earthquake Type)', '')
-        if 'Artci Deprem' in str(et) or 'Aftershock' in str(et):
-            return '<span style="color:#1976D2;font-style:italic">- (Artçı / Aftershock)</span>'
+        if 'Oncu Deprem' in str(et) or 'Foreshock' in str(et):
+            return '<span style="color:#F57C00;font-style:italic">- (Öncü / Foreshock)</span>'
         
         v = row[pc]
         if pd.isna(v) or v == "":
             return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
         try:
             val = float(v)
-            # ✅ YENİ RENK EŞİKLERİ (Bilimsel)
-            # %50+ → Koyu kırmızı + uyarı (Yüksek risk)
-            # %25-50 → Kırmızı bold (Orta-Yüksek risk)
-            # %10-25 → Turuncu (Dikkat)
-            # < %10 → Normal
             if val >= 50.00:
                 return f'<span style="color:#b71c1c;font-weight:bold;font-size:1.05em">{val:.2f} ⚠</span>'
             elif val >= 25.00:
@@ -1291,9 +1288,9 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
             return '<span style="color:gray">Veri Yetersiz (Insufficient Data)</span>'
 
     def fc(row):
-        # ✅ ARTÇI FİLTRESİ: Artçılar için güven skoru gösterme
+        # ✅ SADECE ÖNCÜ FİLTRESİ: Güven skoru da gizle
         et = row.get('Deprem Tipi (Earthquake Type)', '')
-        if 'Artci Deprem' in str(et) or 'Aftershock' in str(et):
+        if 'Oncu Deprem' in str(et) or 'Foreshock' in str(et):
             return "-"
         
         if pd.isna(row[pc]) or row[pc] == "":
@@ -1381,7 +1378,8 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "• <span style='color:red;font-weight:bold'>%25-50: Orta-Yüksek Risk (Medium-High Risk)</span><br>"
                 "• <span style='color:#f57c00'>%10-25: Dikkat (Caution)</span><br>"
                 "• Normal: &lt; %10<br>"
-                "• <span style='color:#1976D2;font-style:italic'>Artçı (Aftershock):</span> Olasılık gösterilmez (mantıksız)<br>"
+                "• <span style='color:#1976D2'>Artçı (Aftershock):</span> Olasılık gösterilir - artçı yeni bir büyük depremin öncüsü olabilir! (may become foreshock of a new mainshock)<br>"
+                "• <span style='color:#F57C00;font-style:italic'>Öncü (Foreshock):</span> Olasılık gösterilmez - büyük deprem zaten gelmiş (large earthquake already followed)<br>"
                 "</div>"
                 "<p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür "
                 "(If insufficient foreshock examples in test set, some metrics show 'N/A'). "
