@@ -739,10 +739,10 @@ def train_sklearn_improved(df_full, new_ids, force=False):
     # Zamansal sıralama
     df_full = df_full.sort_values('time').reset_index(drop=True)
     
-    # GAP-BUFFERED 3'lü split: Train (60%) | GAP (60d) | Validation (20%) | GAP (60d) | Test (20%)
+    # GAP-BUFFERED 3'lü split: Train (55%) | GAP (60d) | Validation (20%) | GAP (60d) | Test (25%)
     n = len(df_full)
-    cutoff_train = df_full['time'].quantile(0.6)
-    cutoff_val = df_full['time'].quantile(0.8)
+    cutoff_train = df_full['time'].quantile(0.55)
+    cutoff_val = df_full['time'].quantile(0.75)
     
     # Buffer süreleri (foreshock penceresi 30 gün, ama güvenlik için 60 gün ekliyoruz)
     buffer_days = FORESHOCK_TIME_WINDOW_DAYS * 2
@@ -984,9 +984,9 @@ def train_sequence_model(df_full, model_type='lstm', force=False):
         except Exception:
             pass
     
-    # Gap-buffered split
+    # Gap-buffered split (Train %75, Test %25)
     df_full = df_full.sort_values('time').reset_index(drop=True)
-    cutoff_train = df_full['time'].quantile(0.8)
+    cutoff_train = df_full['time'].quantile(0.75)
     buffer_days = FORESHOCK_TIME_WINDOW_DAYS * 2
     gap_train_test = cutoff_train + timedelta(days=buffer_days)
     
@@ -1416,6 +1416,121 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
 # ============================================================================
 # ANA FONKSİYON (DÜZELTILMIŞ BÖLÜM - v20)
 # ============================================================================
+def download_db_from_release(db_path, repo="ozgursaygi/deprem-analiz"):
+    """
+    GitHub Releases'ten en son database'i indir.
+    Eğer release yoksa veya download başarısızsa False döner.
+    """
+    if os.path.exists(db_path):
+        print(f"{G_}✓ Database zaten mevcut: {db_path}{X_}")
+        return True
+    
+    url = f"https://github.com/{repo}/releases/latest/download/{os.path.basename(db_path)}"
+    print(f"{C_}Database indiriliyor (downloading): {url}{X_}")
+    
+    try:
+        response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
+        if response.status_code == 200:
+            total_size = int(response.headers.get('content-length', 0))
+            with open(db_path, 'wb') as f:
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+            size_mb = os.path.getsize(db_path) / (1024 * 1024)
+            print(f"{G_}✓ Database indirildi: {size_mb:.1f} MB{X_}")
+            return True
+        elif response.status_code == 404:
+            print(f"{Y_}⚠ Release veya database dosyası bulunamadı (ilk çalıştırma olabilir).{X_}")
+            return False
+        else:
+            print(f"{R_}✗ HTTP {response.status_code}: Database indirilemedi.{X_}")
+            return False
+    except Exception as e:
+        print(f"{R_}✗ Database indirme hatası: {e}{X_}")
+        return False
+
+def upload_db_to_release(db_path, repo="ozgursaygi/deprem-analiz", tag="db-latest"):
+    """
+    Database'i GitHub Releases'e yükle.
+    GITHUB_TOKEN environment variable'ı gerekli (workflow otomatik sağlar).
+    """
+    token = os.environ.get('GITHUB_TOKEN')
+    if not token:
+        print(f"{Y_}⚠ GITHUB_TOKEN bulunamadı. Database yüklenmedi (lokal çalışma için normal).{X_}")
+        return False
+    
+    if not os.path.exists(db_path):
+        print(f"{R_}✗ Database dosyası bulunamadı: {db_path}{X_}")
+        return False
+    
+    size_mb = os.path.getsize(db_path) / (1024 * 1024)
+    print(f"{C_}Database yükleniyor (uploading): {size_mb:.1f} MB...{X_}")
+    
+    try:
+        headers = {
+            'Authorization': f'token {token}',
+            'Accept': 'application/vnd.github.v3+json'
+        }
+        
+        # 1) Mevcut release'i bul (tag = "db-latest")
+        release_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+        r = requests.get(release_url, headers=headers, timeout=30)
+        
+        if r.status_code == 200:
+            # Release var - eski asset'i sil
+            release = r.json()
+            release_id = release['id']
+            for asset in release.get('assets', []):
+                if asset['name'] == os.path.basename(db_path):
+                    print(f"{C_}  Eski database siliniyor...{X_}")
+                    requests.delete(f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
+                                    headers=headers, timeout=30)
+        elif r.status_code == 404:
+            # Release yok - oluştur
+            print(f"{C_}  Yeni release oluşturuluyor: {tag}...{X_}")
+            create_url = f"https://api.github.com/repos/{repo}/releases"
+            payload = {
+                'tag_name': tag,
+                'name': 'Database (auto-updated)',
+                'body': 'Otomatik güncellenen database dosyası. Her runda yenilenir.',
+                'draft': False,
+                'prerelease': False
+            }
+            r = requests.post(create_url, json=payload, headers=headers, timeout=30)
+            if r.status_code != 201:
+                print(f"{R_}✗ Release oluşturulamadı: HTTP {r.status_code}{X_}")
+                print(r.text[:500])
+                return False
+            release = r.json()
+            release_id = release['id']
+        else:
+            print(f"{R_}✗ Release bulunamadı: HTTP {r.status_code}{X_}")
+            return False
+        
+        # 2) Database'i yeni asset olarak yükle
+        upload_url = f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets"
+        upload_url += f"?name={os.path.basename(db_path)}"
+        
+        with open(db_path, 'rb') as f:
+            upload_headers = {
+                'Authorization': f'token {token}',
+                'Content-Type': 'application/octet-stream'
+            }
+            r = requests.post(upload_url, data=f, headers=upload_headers, timeout=600)
+        
+        if r.status_code == 201:
+            print(f"{G_}✓ Database GitHub Releases'e yüklendi: {size_mb:.1f} MB{X_}")
+            return True
+        else:
+            print(f"{R_}✗ Database yüklenemedi: HTTP {r.status_code}{X_}")
+            print(r.text[:500])
+            return False
+    except Exception as e:
+        print(f"{R_}✗ Database yükleme hatası: {e}{X_}")
+        return False
+
 def main():
     t0 = time.time()
     db = "earthquakes_3_5_plus_scientific_v5.db"
@@ -1424,11 +1539,14 @@ def main():
     conn = None
     try:
         print(f"{C_}{'='*70}")
-        print("Analiz v21 (Analysis v21 - Düzeltilmiş Metrikler / Corrected Metrics)")
+        print("Analiz v22 (Analysis v22 - Düzeltilmiş Metrikler / Corrected Metrics)")
         print(f"{'='*70}{X_}")
 
         # ✅ docs/ klasörünü hazırla (v20 - YENİ)
         docs_dir = ensure_docs_dir()
+
+        # ✅ YENİ: GitHub Releases'ten database'i indir (varsa)
+        download_db_from_release(db)
 
         # Veritabanı bağlantısı ve tablo oluşturma
         conn = sqlite3.connect(db)
@@ -1546,18 +1664,24 @@ def main():
         except Exception as e:
             print(f"{R_}✗ last_update.txt yazılamadı: {e}{X_}")
 
-        # Veritabanını güncelle
+        # Veritabanını güncelle (Update database)
         dfs = dfr.copy()
         dfs['time'] = dfs['time'].dt.strftime('%Y-%m-%d %H:%M:%S')
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({tn})")
         db_cols = [i[1] for i in cur.fetchall()]
         dfs[db_cols].to_sql(tn, conn, if_exists='replace', index=False)
+        conn.commit()
+        conn.close()
+        conn = None  # Upload öncesi close gerekli
+        
+        # ✅ YENİ: Database'i GitHub Releases'e yükle
+        upload_db_to_release(db)
 
         elapsed = time.time() - t0
         print(f"\n{G_}{'='*70}")
         print(f"✓ TAMAMLANDI (COMPLETED)")
-        print(f"Başarılı Kopyalama: {basarili}/{len(rapor_list)}")
+        print(f"Başarılı Kopyalama (Files copied): {basarili}/{len(rapor_list)}")
         print(f"Süre (Duration): {elapsed:.1f} saniye (seconds)")
         print(f"{'='*70}{X_}")
         print(f"\n{G_}Üretilen Dosyalar (Generated Files):{X_}")
@@ -1566,7 +1690,6 @@ def main():
                 print(f"  ✓ {d}")
         print(f"  ✓ {docs_dir}/last_update.txt")
         print(f"\n{P_}GitHub Pages URL: https://ozgursaygi.github.io/deprem-analiz/{X_}")
-        print("\nNot: Veritabanı dosyası .gitignore ile repodan hariç tutulmuştur.")
 
     except Exception as e:
         print(f"{R_}HATA (ERROR): {e}{X_}")
