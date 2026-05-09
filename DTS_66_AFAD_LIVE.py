@@ -724,6 +724,63 @@ def plot_molchan(md, fn='molchan.png'):
     except Exception:
         pass
 
+def plot_calibration(model_calibrations, fn='calibration_curve.png'):
+    """
+    Calibration Curve: Model "%30 öncü" dediğinde gerçekten %30 mu?
+    Mükemmel kalibrasyon = diyagonal çizgi üzerinde
+    """
+    try:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Sol: Calibration Curve
+        ax1 = axes[0]
+        ax1.plot([0, 1], [0, 1], 'k--', lw=1, label='Mükemmel Kalibrasyon (Perfect)')
+        
+        colors = {'XGB': '#1976D2', 'RF': '#2E7D32', 'LSTM': '#F57C00',
+                  'GRU': '#9C27B0', 'TRANSFORMER': '#D32F2F'}
+        
+        for model_name, cal_data in model_calibrations.items():
+            if cal_data is None:
+                continue
+            prob_true = cal_data['prob_true']
+            prob_pred = cal_data['prob_pred']
+            ece = cal_data['ece']
+            ax1.plot(prob_pred, prob_true, 's-', lw=2,
+                     color=colors.get(model_name, '#333'),
+                     label=f'{model_name} (ECE={ece:.3f})', markersize=6)
+        
+        ax1.set_xlabel('Tahmin Edilen Olasılık (Predicted Probability)', fontsize=11)
+        ax1.set_ylabel('Gerçek Olasılık (Actual Probability)', fontsize=11)
+        ax1.set_title('Kalibrasyon Eğrisi (Calibration Curve)', fontsize=13, fontweight='bold')
+        ax1.legend(loc='lower right', fontsize=9)
+        ax1.grid(alpha=0.3)
+        ax1.set_xlim([-0.02, 1.02])
+        ax1.set_ylim([-0.02, 1.02])
+        
+        # Sağ: Histogram - tahmin dağılımı
+        ax2 = axes[1]
+        for model_name, cal_data in model_calibrations.items():
+            if cal_data is None:
+                continue
+            ax2.hist(cal_data['y_proba'], bins=20, alpha=0.5,
+                     color=colors.get(model_name, '#333'),
+                     label=f'{model_name}', edgecolor='white')
+        
+        ax2.set_xlabel('Tahmin Edilen Olasılık (Predicted Probability)', fontsize=11)
+        ax2.set_ylabel('Deprem Sayısı (Count)', fontsize=11)
+        ax2.set_title('Tahmin Dağılımı (Prediction Distribution)', fontsize=13, fontweight='bold')
+        ax2.legend(fontsize=9)
+        ax2.grid(alpha=0.3)
+        
+        plt.suptitle('Model Kalibrasyon Analizi (Model Calibration Analysis)',
+                     fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        plt.savefig(fn, dpi=150, bbox_inches='tight')
+        print(f"{G_}✓ Calibration curve kaydedildi: {fn}{X_}")
+        plt.close()
+    except Exception as e:
+        print(f"{Y_}Calibration curve oluşturulamadı: {e}{X_}")
+
 # ====================== EĞİTİM FONKSİYONLARI ======================
 def train_sklearn_improved(df_full, new_ids, force=False):
     """
@@ -849,11 +906,37 @@ def train_sklearn_improved(df_full, new_ids, force=False):
         if met['molchan_skill'] < 0:
             print(f"{R_}  ⚠ {mtype.upper()} UYARI: Skill Score < 0 (rastgeleden kötü). Bu model güvenilir değil.{X_}")
 
+        # ✅ YENİ: Calibration verisi topla
+        cal_data = None
+        if len(np.unique(yte)) >= 2:
+            try:
+                prob_true, prob_pred = calibration_curve(yte, ypr, n_bins=10, strategy='uniform')
+                ece = np.mean(np.abs(prob_true - prob_pred))
+                cal_data = {
+                    'prob_true': prob_true,
+                    'prob_pred': prob_pred,
+                    'ece': ece,
+                    'y_proba': ypr
+                }
+                met['ece'] = ece
+                met['calibration_data'] = cal_data
+            except Exception as e:
+                print(f"{Y_}  {mtype.upper()} calibration hesaplanamadı: {e}{X_}")
+
         models[mtype] = cal
         metrics[mtype] = met
         plot_molchan(mcd, fn=f'molchan_{mtype}.png')
         joblib.dump(cal, mp[mtype])
         print(f"{G_}{mtype.upper()} Hazir | AUC:{met['auc']:.3f} | F1:{met['f1_score']:.3f} | Recall:{met['recall']:.3f} | Skill:{met['molchan_skill']:.3f}{X_}")
+    
+    # ✅ YENİ: Calibration Curve grafiği oluştur (tüm modeller)
+    cal_dict = {}
+    for mtype in ['xgb', 'rf']:
+        if metrics.get(mtype) and metrics[mtype].get('calibration_data'):
+            cal_dict[mtype.upper()] = metrics[mtype]['calibration_data']
+    if cal_dict:
+        plot_calibration(cal_dict, fn='calibration_curve.png')
+    
     return models, metrics, {}
 
 def build_lstm(shape):
@@ -1378,12 +1461,25 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 threshold_val = mt.get('optimal_threshold', np.nan)
                 threshold_str = f"{threshold_val:.3f}" if not np.isnan(threshold_val) else "0.500"
                 
+                # ECE (Expected Calibration Error)
+                ece_val = mt.get('ece', np.nan)
+                if not np.isnan(ece_val):
+                    if ece_val < 0.05:
+                        ece_str = f"<span style='color:#2e7d32;font-weight:bold'>{ece_val:.3f} ✓</span>"
+                    elif ece_val < 0.15:
+                        ece_str = f"<span style='color:#f57c00'>{ece_val:.3f}</span>"
+                    else:
+                        ece_str = f"<span style='color:#d32f2f'>{ece_val:.3f} ⚠</span>"
+                else:
+                    ece_str = "N/A"
+                
                 rows += (f"<tr><td><b>{mn.upper()}</b></td>"
                          f"<td>{auc_str}</td>"
                          f"<td>{f1_str}</td>"
                          f"<td>{prec_str}</td>"
                          f"<td>{rec_str}</td>"
                          f"<td>{skill_str}</td>"
+                         f"<td>{ece_str}</td>"
                          f"<td>{threshold_str}</td></tr>")
         if rows:
             perf = (
@@ -1412,7 +1508,7 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "(Optimal threshold found by maximizing F1 on validation set).</p>"
                 "<table style='width:100%;border-collapse:collapse'>"
                 "<tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th>"
-                "<th>Molchan Skill</th><th>Eşik (Threshold)</th></tr>"
+                "<th>Molchan Skill</th><th>ECE (Kalibrasyon)</th><th>Eşik (Threshold)</th></tr>"
                 + rows +
                 "</table>"
                 "<p style='font-size:.9em;color:#666;margin-top:10px'>"
@@ -1420,7 +1516,13 @@ def gen_report(dfr, user, rtime, summary, new_ids, minfo, expl):
                 "• Train/Validation/Test ayrımı (split) zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme / leakage prevention).<br>"
                 "• Threshold validation setinde optimize edildi (optimized) — test setine bakılmadı (not seen).<br>"
                 "• Sınıf dengesizliği (class imbalance) için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>"
-                "• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).</p>"
+                "• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).<br>"
+                "• <b>ECE (Expected Calibration Error):</b> Model tahminlerinin kalibrasyonu (calibration). "
+                "ECE &lt; 0.05 = iyi kalibre ✓, ECE &gt; 0.15 = kötü kalibre ⚠. "
+                "Düşük ECE = model '%30 öncü' dediğinde gerçekten ~%30 foreshock olduğu anlamına gelir. "
+                "(Low ECE means when model says '30%% foreshock' it is actually close to 30%%.)</p>"
+                "<p style='font-size:.9em;color:#666'>"
+                "📈 <a href='calibration_curve.png' target='_blank'>Kalibrasyon Eğrisi Grafiği (Calibration Curve Chart)</a></p>"
             )
 
     tbl = rt.to_html(index=False, escape=False)
@@ -1694,7 +1796,8 @@ def main():
             "foreshock_sensitivity_analysis.csv",
             "sensitivity_analysis.png",
             "molchan_xgb.png",
-            "molchan_rf.png"
+            "molchan_rf.png",
+            "calibration_curve.png"
         ]
         
         basarili = 0
