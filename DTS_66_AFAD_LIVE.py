@@ -1972,6 +1972,10 @@ def main():
 
         # ✅ YENİ: Bölgesel performans analizi
         print(f"\n{C_}Bölgesel performans analizi yapılıyor (Regional performance analysis)...{X_}")
+        # Önce tüm veriye foreshock etiketi ata (bölgesel AUC hesabı için gerekli)
+        if TARGET not in dfr.columns or dfr[TARGET].sum() == 0:
+            print(f"{C_}  Foreshock etiketleri atanıyor (tüm veri)...{X_}")
+            dfr = create_labels_parametric(dfr.copy(), verbose=False)
         af = [f for f in ENHANCED_FEATURES if f in dfr.columns]
         regional_metrics = calc_regional_metrics(dfr, models, af)
         for zone, rm in regional_metrics.items():
