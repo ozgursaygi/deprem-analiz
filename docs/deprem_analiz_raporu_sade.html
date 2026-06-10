@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'><meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'><meta http-equiv='Pragma' content='no-cache'><meta http-equiv='Expires' content='0'><title>Risk Analiz Raporu (Risk Analysis Report)</title><style>body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}h1{color:#2c3e50}h3{color:#34495e;margin-top:30px}table{width:100%;border-collapse:collapse;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}th{background:#004d40;color:white}tr:hover{background:#f1f1f1}.info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}</style></head><body><h1>Risk Analiz Raporu (Risk Analysis Report)<br><span style='font-size:0.7em;color:#555'>v21 - Düzeltilmiş Metrikler (Corrected Metrics)</span></h1><p><b>Rapor Tarihi (Report Date):</b> 2026-06-10 01:15:26 | <b>Kullanici (User):</b> ozgursaygi</p><div class='info'><b>Ozet (Summary):</b> Toplam 17400 olay analiz edildi (Total 17400 events analyzed). Sabit oncu deprem tanimi (modelden bağımsız) kullanilmistir (Fixed foreshock definition - model independent). Düzeltilmiş metrik hesaplama (Corrected metric calculation - NaN handled).<br><b>Deprem Oncu Tanimi (Foreshock Definition):</b> Sabit parametreler / Fixed parameters (Mag>=5.5, Time<=30gün/days, Dist<=50km, ΔM>=0.8). Bu parametreler model eğitiminden bağımsızdır (model-independent). <b>Dikkat (Warning):</b> Gelecek ana şok bilgisi kullanılır (future mainshock info used - future leakage)</div><h3>Model Performans Metrikleri (Model Performance Metrics)</h3><div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'><b>📊 Yorum (Interpretation):</b><br>• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü (Worse than random) ⚠ — kullanılmamalı (do not use)<br>• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü (Weak discrimination)<br>• <b>AUC 0.6-0.7:</b> Orta düzey - deprem tahmininde gerçekçi (Moderate - realistic for earthquake prediction)<br>• <b>AUC ≥ 0.7:</b> İyi performans (Good performance) ✓<br>• <b>Skill Score &lt; 0:</b> Rastgeleden kötü (Worse than random) ⚠<br>• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması - en önemli metrik (Harmonic mean - most important metric)<br>• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık (How many actual foreshocks we caught)<br>• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek (How many of our predictions are correct)<br><br><b>🎨 Olasılık Renk Kodları (Probability Color Codes):</b><br>• <span style='color:#b71c1c;font-weight:bold'>≥ %50: Yüksek Risk (High Risk) ⚠</span><br>• <span style='color:red;font-weight:bold'>%25-50: Orta-Yüksek Risk (Medium-High Risk)</span><br>• <span style='color:#f57c00'>%10-25: Dikkat (Caution)</span><br>• Normal: &lt; %10<br>• <span style='color:#1976D2'>Artçı (Aftershock):</span> Olasılık gösterilir - artçı yeni bir büyük depremin öncüsü olabilir! (may become foreshock of a new mainshock)<br>• <span style='color:#F57C00;font-style:italic'>Öncü (Foreshock):</span> Olasılık gösterilmez - büyük deprem zaten gelmiş (large earthquake already followed)<br></div><p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür (If insufficient foreshock examples in test set, some metrics show 'N/A'). Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur (Optimal threshold found by maximizing F1 on validation set).</p><table style='width:100%;border-collapse:collapse'><tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th><th>Molchan Skill</th><th>ECE (Kalibrasyon)</th><th>Eşik (Threshold)</th></tr><tr><td><b>XGB</b></td><td><span style='color:#2e7d32;font-weight:bold'>0.707 ✓</span></td><td>0.124</td><td>0.067</td><td>0.780</td><td><span style='color:#2e7d32;font-weight:bold'>0.414 ✓</span></td><td><span style='color:#f57c00'>0.112</span></td><td>0.051</td></tr><tr><td><b>RF</b></td><td><span style='color:#2e7d32;font-weight:bold'>0.702 ✓</span></td><td>0.129</td><td>0.070</td><td>0.841</td><td><span style='color:#2e7d32;font-weight:bold'>0.405 ✓</span></td><td><span style='color:#f57c00'>0.101</span></td><td>0.035</td></tr><tr><td><b>LSTM</b></td><td><span style='color:#f57c00'>0.552</span></td><td>0.012</td><td>0.050</td><td>0.007</td><td><span style='color:#f57c00'>0.103</span></td><td>N/A</td><td>0.450</td></tr><tr><td><b>GRU</b></td><td>0.611</td><td>0.011</td><td>0.033</td><td>0.007</td><td><span style='color:#2e7d32;font-weight:bold'>0.223 ✓</span></td><td>N/A</td><td>0.450</td></tr><tr><td><b>TRANSFORMER</b></td><td><span style='color:#f57c00'>0.537</span></td><td>0.018</td><td>0.010</td><td>0.060</td><td><span style='color:#f57c00'>0.075</span></td><td>N/A</td><td>0.450</td></tr></table><p style='font-size:.9em;color:#666;margin-top:10px'><b>Notlar (Notes):</b><br>• Train/Validation/Test ayrımı (split) zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme / leakage prevention).<br>• Threshold validation setinde optimize edildi (optimized) — test setine bakılmadı (not seen).<br>• Sınıf dengesizliği (class imbalance) için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).<br>• <b>ECE (Expected Calibration Error):</b> Model tahminlerinin kalibrasyonu (calibration). ECE &lt; 0.05 = iyi kalibre ✓, ECE &gt; 0.15 = kötü kalibre ⚠. Düşük ECE = model '%30 öncü' dediğinde gerçekten ~%30 foreshock olduğu anlamına gelir. (Low ECE means when model says '30%% foreshock' it is actually close to 30%%.)</p><p style='font-size:.9em;color:#666'>📈 <a href='calibration_curve.png' target='_blank'>Kalibrasyon Eğrisi Grafiği (Calibration Curve Chart)</a></p><h3>Bölgesel Performans Analizi (Regional Performance Analysis)</h3><p style='font-size:.9em;color:#666'>Her sismik bölge için ayrı model performansı (Separate model performance for each seismic zone). AUC ≥ 0.65 = Güvenilir (Reliable) ✓, AUC 0.55-0.65 = Orta (Moderate), AUC &lt; 0.55 = Güvenilmez (Unreliable) ⚠</p><table style='width:100%;border-collapse:collapse'><tr><th>Bölge (Zone)</th><th>Deprem Sayısı (Count)</th><th>Foreshock Sayısı</th><th>En İyi AUC (Best AUC)</th><th>Güvenilirlik (Reliability)</th></tr><tr><td>Bati Anadolu (Western Anatolia)</td><td>338</td><td>10</td><td><span style='color:#2e7d32;font-weight:bold'>1.000 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Guneydogu Anadolu (SE Anatolia)</td><td>534</td><td>80</td><td><span style='color:#2e7d32;font-weight:bold'>0.903 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Dogu Anadolu Fay Zonu (EAFZ)</td><td>3015</td><td>552</td><td><span style='color:#2e7d32;font-weight:bold'>0.870 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Akdeniz (Mediterranean)</td><td>1299</td><td>247</td><td><span style='color:#2e7d32;font-weight:bold'>0.776 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Kuzey Anadolu Fay Zonu (NAFZ)</td><td>4061</td><td>541</td><td><span style='color:#2e7d32;font-weight:bold'>0.721 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Diger Bolge (Other Region)</td><td>5410</td><td>804</td><td><span style='color:#2e7d32;font-weight:bold'>0.720 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Ege Graben Sistemi (Aegean)</td><td>2743</td><td>652</td><td><span style='color:#2e7d32;font-weight:bold'>0.693 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr></table><h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3><table border="1" class="dataframe">
+<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'><meta http-equiv='Cache-Control' content='no-cache, no-store, must-revalidate, max-age=0'><meta http-equiv='Pragma' content='no-cache'><meta http-equiv='Expires' content='0'><title>Risk Analiz Raporu (Risk Analysis Report)</title><style>body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f5f5f5}h1{color:#2c3e50}h3{color:#34495e;margin-top:30px}table{width:100%;border-collapse:collapse;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);margin-top:15px}th,td{padding:12px;border-bottom:1px solid #ddd;text-align:left}th{background:#004d40;color:white}tr:hover{background:#f1f1f1}.info{background:#e8f5e9;padding:15px;border-radius:5px;border-left:5px solid #2e7d32;margin:20px 0}</style></head><body><h1>Risk Analiz Raporu (Risk Analysis Report)<br><span style='font-size:0.7em;color:#555'>v21 - Düzeltilmiş Metrikler (Corrected Metrics)</span></h1><p><b>Rapor Tarihi (Report Date):</b> 2026-06-10 13:25:40 | <b>Kullanici (User):</b> ozgursaygi</p><div class='info'><b>Ozet (Summary):</b> Toplam 17401 olay analiz edildi (Total 17401 events analyzed). Sabit oncu deprem tanimi (modelden bağımsız) kullanilmistir (Fixed foreshock definition - model independent). Düzeltilmiş metrik hesaplama (Corrected metric calculation - NaN handled).<br><b>Deprem Oncu Tanimi (Foreshock Definition):</b> Sabit parametreler / Fixed parameters (Mag>=5.5, Time<=30gün/days, Dist<=50km, ΔM>=0.8). Bu parametreler model eğitiminden bağımsızdır (model-independent). <b>Dikkat (Warning):</b> Gelecek ana şok bilgisi kullanılır (future mainshock info used - future leakage)</div><h3>Model Performans Metrikleri (Model Performance Metrics)</h3><div style='background:#fff3e0;padding:15px;border-left:5px solid #f57c00;margin:10px 0;border-radius:5px'><b>📊 Yorum (Interpretation):</b><br>• <b>AUC &lt; 0.5:</b> Model rastgeleden kötü (Worse than random) ⚠ — kullanılmamalı (do not use)<br>• <b>AUC 0.5-0.6:</b> Zayıf ayrım gücü (Weak discrimination)<br>• <b>AUC 0.6-0.7:</b> Orta düzey - deprem tahmininde gerçekçi (Moderate - realistic for earthquake prediction)<br>• <b>AUC ≥ 0.7:</b> İyi performans (Good performance) ✓<br>• <b>Skill Score &lt; 0:</b> Rastgeleden kötü (Worse than random) ⚠<br>• <b>F1 Score:</b> Precision ve Recall'ın harmonik ortalaması - en önemli metrik (Harmonic mean - most important metric)<br>• <b>Recall:</b> Gerçek foreshocklardan ne kadarını yakaladık (How many actual foreshocks we caught)<br>• <b>Precision:</b> Foreshock dediklerimizin ne kadarı gerçek (How many of our predictions are correct)<br><br><b>🎨 Olasılık Renk Kodları (Probability Color Codes):</b><br>• <span style='color:#b71c1c;font-weight:bold'>≥ %50: Yüksek Risk (High Risk) ⚠</span><br>• <span style='color:red;font-weight:bold'>%25-50: Orta-Yüksek Risk (Medium-High Risk)</span><br>• <span style='color:#f57c00'>%10-25: Dikkat (Caution)</span><br>• Normal: &lt; %10<br>• <span style='color:#1976D2'>Artçı (Aftershock):</span> Olasılık gösterilir - artçı yeni bir büyük depremin öncüsü olabilir! (may become foreshock of a new mainshock)<br>• <span style='color:#F57C00;font-style:italic'>Öncü (Foreshock):</span> Olasılık gösterilmez - büyük deprem zaten gelmiş (large earthquake already followed)<br></div><p style='color:#d32f2f'><b>Not (Note):</b> Test setinde yeterli foreshock örneği yoksa bazı metrikler 'N/A' olarak görünür (If insufficient foreshock examples in test set, some metrics show 'N/A'). Optimal threshold validation setinde F1-skoru maksimize edilerek bulunmuştur (Optimal threshold found by maximizing F1 on validation set).</p><table style='width:100%;border-collapse:collapse'><tr><th>Model</th><th>AUC</th><th>F1 Score</th><th>Precision</th><th>Recall</th><th>Molchan Skill</th><th>ECE (Kalibrasyon)</th><th>Eşik (Threshold)</th></tr><tr><td><b>XGB</b></td><td><span style='color:#2e7d32;font-weight:bold'>0.720 ✓</span></td><td>0.127</td><td>0.069</td><td>0.744</td><td><span style='color:#2e7d32;font-weight:bold'>0.440 ✓</span></td><td><span style='color:#f57c00'>0.113</span></td><td>0.052</td></tr><tr><td><b>RF</b></td><td><span style='color:#2e7d32;font-weight:bold'>0.706 ✓</span></td><td>0.132</td><td>0.072</td><td>0.817</td><td><span style='color:#2e7d32;font-weight:bold'>0.412 ✓</span></td><td><span style='color:#f57c00'>0.098</span></td><td>0.035</td></tr><tr><td><b>LSTM</b></td><td>0.648</td><td>0.010</td><td>0.018</td><td>0.007</td><td><span style='color:#2e7d32;font-weight:bold'>0.296 ✓</span></td><td>N/A</td><td>0.450</td></tr><tr><td><b>GRU</b></td><td><span style='color:#f57c00'>0.568</span></td><td>0.000</td><td>0.000</td><td>0.000</td><td><span style='color:#f57c00'>0.136</span></td><td>N/A</td><td>0.450</td></tr><tr><td><b>TRANSFORMER</b></td><td><span style='color:#f57c00'>0.594</span></td><td>0.046</td><td>0.027</td><td>0.160</td><td><span style='color:#f57c00'>0.188</span></td><td>N/A</td><td>0.450</td></tr></table><p style='font-size:.9em;color:#666;margin-top:10px'><b>Notlar (Notes):</b><br>• Train/Validation/Test ayrımı (split) zaman bazlı, aralarda 60 gün buffer (foreshock leakage önleme / leakage prevention).<br>• Threshold validation setinde optimize edildi (optimized) — test setine bakılmadı (not seen).<br>• Sınıf dengesizliği (class imbalance) için XGBoost'ta scale_pos_weight, RF'de class_weight='balanced', LSTM'de class_weight kullanıldı.<br>• <b>Dikkat (Warning):</b> Deprem öncü tahmini (earthquake foreshock prediction) çözülmemiş bir problemdir (unsolved problem). Gerçek dünyada AUC 0.6-0.7 makul kabul edilir (acceptable).<br>• <b>ECE (Expected Calibration Error):</b> Model tahminlerinin kalibrasyonu (calibration). ECE &lt; 0.05 = iyi kalibre ✓, ECE &gt; 0.15 = kötü kalibre ⚠. Düşük ECE = model '%30 öncü' dediğinde gerçekten ~%30 foreshock olduğu anlamına gelir. (Low ECE means when model says '30%% foreshock' it is actually close to 30%%.)</p><p style='font-size:.9em;color:#666'>📈 <a href='calibration_curve.png' target='_blank'>Kalibrasyon Eğrisi Grafiği (Calibration Curve Chart)</a></p><h3>Bölgesel Performans Analizi (Regional Performance Analysis)</h3><p style='font-size:.9em;color:#666'>Her sismik bölge için ayrı model performansı (Separate model performance for each seismic zone). AUC ≥ 0.65 = Güvenilir (Reliable) ✓, AUC 0.55-0.65 = Orta (Moderate), AUC &lt; 0.55 = Güvenilmez (Unreliable) ⚠</p><table style='width:100%;border-collapse:collapse'><tr><th>Bölge (Zone)</th><th>Deprem Sayısı (Count)</th><th>Foreshock Sayısı</th><th>En İyi AUC (Best AUC)</th><th>Güvenilirlik (Reliability)</th></tr><tr><td>Bati Anadolu (Western Anatolia)</td><td>339</td><td>10</td><td><span style='color:#2e7d32;font-weight:bold'>1.000 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Guneydogu Anadolu (SE Anatolia)</td><td>534</td><td>80</td><td><span style='color:#2e7d32;font-weight:bold'>0.900 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Dogu Anadolu Fay Zonu (EAFZ)</td><td>3015</td><td>552</td><td><span style='color:#2e7d32;font-weight:bold'>0.870 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Akdeniz (Mediterranean)</td><td>1299</td><td>247</td><td><span style='color:#2e7d32;font-weight:bold'>0.772 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Kuzey Anadolu Fay Zonu (NAFZ)</td><td>4061</td><td>541</td><td><span style='color:#2e7d32;font-weight:bold'>0.725 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Diger Bolge (Other Region)</td><td>5410</td><td>804</td><td><span style='color:#2e7d32;font-weight:bold'>0.722 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr><tr><td>Ege Graben Sistemi (Aegean)</td><td>2743</td><td>652</td><td><span style='color:#2e7d32;font-weight:bold'>0.697 ✓</span></td><td><span style='color:#2e7d32;font-weight:bold'>Güvenilir (Reliable) ✓</span></td></tr></table><h3>Son Depremler (Recent Earthquakes) — M 4.0+</h3><table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
       <th>Zaman (Time UTC)</th>
@@ -35,8 +35,8 @@
       <td>4.2</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.20</span></td>
-      <td>72.33</td>
+      <td><span style="color:red;font-weight:bold">39.62</span></td>
+      <td>74.62</td>
     </tr>
     <tr>
       <td>2026-05-24 19:36:49</td>
@@ -44,8 +44,8 @@
       <td>4.0</td>
       <td>12.76</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td><span style="color:red;font-weight:bold">43.13</span></td>
-      <td>72.25</td>
+      <td><span style="color:red;font-weight:bold">39.47</span></td>
+      <td>74.40</td>
     </tr>
     <tr>
       <td>2026-05-24 01:26:51</td>
@@ -53,8 +53,8 @@
       <td>4.9</td>
       <td>9.32</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.19</span></td>
-      <td>72.36</td>
+      <td><span style="color:red;font-weight:bold">39.55</span></td>
+      <td>74.53</td>
     </tr>
     <tr>
       <td>2026-05-23 13:34:18</td>
@@ -71,8 +71,8 @@
       <td>5.6</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.05</span></td>
-      <td>72.15</td>
+      <td><span style="color:red;font-weight:bold">39.41</span></td>
+      <td>74.33</td>
     </tr>
     <tr>
       <td>2026-05-10 20:29:56</td>
@@ -89,8 +89,8 @@
       <td>4.0</td>
       <td>7.00</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.45</span></td>
-      <td>72.76</td>
+      <td><span style="color:red;font-weight:bold">39.82</span></td>
+      <td>74.95</td>
     </tr>
     <tr>
       <td>2026-05-05 07:21:12</td>
@@ -323,8 +323,8 @@
       <td>4.8</td>
       <td>5.53</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">29.74</span></td>
-      <td>79.30</td>
+      <td><span style="color:red;font-weight:bold">34.14</span></td>
+      <td>77.70</td>
     </tr>
     <tr>
       <td>2026-04-08 07:20:13</td>
@@ -503,8 +503,8 @@
       <td>4.5</td>
       <td>6.40</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.28</span></td>
-      <td>76.32</td>
+      <td><span style="color:red;font-weight:bold">38.92</span></td>
+      <td>78.96</td>
     </tr>
     <tr>
       <td>2026-03-11 10:58:11</td>
@@ -584,8 +584,8 @@
       <td>4.0</td>
       <td>9.22</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">44.03</span></td>
-      <td>73.63</td>
+      <td><span style="color:red;font-weight:bold">39.34</span></td>
+      <td>77.24</td>
     </tr>
     <tr>
       <td>2026-03-03 13:05:35</td>
@@ -5120,8 +5120,8 @@
       <td>5.3</td>
       <td>6.45</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">43.57</span></td>
-      <td>73.55</td>
+      <td><span style="color:red;font-weight:bold">41.48</span></td>
+      <td>75.12</td>
     </tr>
     <tr>
       <td>2024-11-02 22:58:30</td>
@@ -5183,8 +5183,8 @@
       <td>4.1</td>
       <td>22.98</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">49.56</span></td>
-      <td>73.06</td>
+      <td><span style="color:red;font-weight:bold">46.07</span></td>
+      <td>74.78</td>
     </tr>
     <tr>
       <td>2024-10-17 08:29:55</td>
@@ -5426,8 +5426,8 @@
       <td>4.2</td>
       <td>7.10</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td><span style="color:red;font-weight:bold">44.37</span></td>
-      <td>69.88</td>
+      <td><span style="color:red;font-weight:bold">41.21</span></td>
+      <td>72.41</td>
     </tr>
     <tr>
       <td>2024-08-16 10:15:35</td>
@@ -5435,8 +5435,8 @@
       <td>5.2</td>
       <td>7.16</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">44.82</span></td>
-      <td>70.28</td>
+      <td><span style="color:red;font-weight:bold">41.13</span></td>
+      <td>73.07</td>
     </tr>
     <tr>
       <td>2024-08-14 01:54:28</td>
@@ -5444,8 +5444,8 @@
       <td>4.0</td>
       <td>13.04</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td><span style="color:red;font-weight:bold">46.25</span></td>
-      <td>69.52</td>
+      <td><span style="color:red;font-weight:bold">42.34</span></td>
+      <td>72.42</td>
     </tr>
     <tr>
       <td>2024-08-13 07:33:16</td>
@@ -5471,8 +5471,8 @@
       <td>4.4</td>
       <td>25.75</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">46.11</span></td>
-      <td>69.53</td>
+      <td><span style="color:red;font-weight:bold">42.01</span></td>
+      <td>72.38</td>
     </tr>
     <tr>
       <td>2024-08-12 20:55:59</td>
@@ -6083,8 +6083,8 @@
       <td>4.0</td>
       <td>7.00</td>
       <td><span style="color:#1976D2;font-weight:bold">Artci Deprem (Aftershock)</span></td>
-      <td><span style="color:red;font-weight:bold">45.08</span></td>
-      <td>71.23</td>
+      <td><span style="color:red;font-weight:bold">38.97</span></td>
+      <td>75.52</td>
     </tr>
     <tr>
       <td>2024-04-18 15:11:23</td>
@@ -6092,8 +6092,8 @@
       <td>5.6</td>
       <td>5.25</td>
       <td><span style="color:#616161;font-weight:bold">Tekil Deprem (Isolated)</span></td>
-      <td><span style="color:red;font-weight:bold">48.55</span></td>
-      <td>68.56</td>
+      <td><span style="color:red;font-weight:bold">44.58</span></td>
+      <td>71.02</td>
     </tr>
     <tr>
       <td>2024-04-17 23:35:46</td>
